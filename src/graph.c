@@ -25,18 +25,37 @@ void graph_run(ASTNode *stmt, int show_tac) {
         return;
     }
 
-    double saved_x; int had_x = symtab_lookup("x", &saved_x);
+    /* Find the one free variable to sample across (usually 'x', but
+       any single name works: "y = t^2" plots against t). Constants
+       (pi, e) don't count, and more than one free name is ambiguous. */
+    char names[8][64];
+    int name_count = 0;
+    ast_collect_vars(rhs, names, 8, &name_count);
+    int free_count = 0;
+    char var_name[64] = "x";
+    for (int i = 0; i < name_count; i++) {
+        if (symtab_is_constant(names[i])) continue;
+        if (free_count == 0) strncpy(var_name, names[i], 63);
+        free_count++;
+    }
+    if (free_count > 1) {
+        semantic_error("/graph supports exactly one free variable, found %d (e.g. '%s' and '%s')",
+                        free_count, var_name, names[1]);
+        return;
+    }
+
+    double saved; int had = symtab_lookup(var_name, &saved);
 
     /* Validate once, loudly (unknown function/variable etc.) */
-    symtab_set("x", 1.0);
+    symtab_set(var_name, 1.0);
     int ok = 1;
     eval(rhs, 0, &ok);
-    if (!ok) { if (had_x) symtab_set("x", saved_x); return; }
+    if (!ok) { if (had) symtab_set(var_name, saved); else symtab_unset(var_name); return; }
 
     TACProgram tac;
     tac_init(&tac);
     const char *operand = tac_build(&tac, rhs);
-    tac_finish_graph(&tac, operand);
+    tac_finish_graph(&tac, operand, var_name);
     if (show_tac) { printf("IR (TAC):\n"); tac_print(&tac); }
 
     double xs[GRAPH_WIDTH], ys[GRAPH_WIDTH];
@@ -49,7 +68,7 @@ void graph_run(ASTNode *stmt, int show_tac) {
     for (int i = 0; i < GRAPH_WIDTH; i++) {
         double x = X_LO + i * step;
         xs[i] = x;
-        symtab_set("x", x);
+        symtab_set(var_name, x);
         int pok = 1;
         double y = eval(rhs, 1, &pok);
         valid[i] = pok;
@@ -62,7 +81,7 @@ void graph_run(ASTNode *stmt, int show_tac) {
             skipped++;
         }
     }
-    if (had_x) symtab_set("x", saved_x);
+    if (had) symtab_set(var_name, saved); else symtab_unset(var_name);
 
     if (valid_count == 0) {
         math_error("no points of this equation lie in the real-valued domain over [%g, %g]", X_LO, X_HI);
@@ -76,9 +95,9 @@ void graph_run(ASTNode *stmt, int show_tac) {
     printf("Sample points:\n");
     for (int i = 0; i < GRAPH_WIDTH; i += (GRAPH_WIDTH - 1) / 8) {
         if (valid[i])
-            printf("  x = %-6s -> y = %s\n", format_number(xs[i]), format_number(ys[i]));
+            printf("  %s = %-6s -> y = %s\n", var_name, format_number(xs[i]), format_number(ys[i]));
         else
-            printf("  x = %-6s -> y = (undefined)\n", format_number(xs[i]));
+            printf("  %s = %-6s -> y = (undefined)\n", var_name, format_number(xs[i]));
     }
 
     /* ASCII plot */
@@ -107,10 +126,10 @@ void graph_run(ASTNode *stmt, int show_tac) {
         canvas[row][i] = '*';
     }
 
-    printf("\nPlot (x from %g to %g, y from %s to %s):\n", X_LO, X_HI, format_number(ymin), format_number(ymax));
+    printf("\nPlot (%s from %g to %g, y from %s to %s):\n", var_name, X_LO, X_HI, format_number(ymin), format_number(ymax));
     for (int r = 0; r < GRAPH_HEIGHT; r++)
         printf("  %s\n", canvas[r]);
-    printf("  %s\n", "  (y-axis: x=0 marked '|', x-axis: y=0 marked '-', curve marked '*')");
+    printf("  (y-axis: %s=0 marked '|', x-axis: y=0 marked '-', curve marked '*')\n", var_name);
 
     if (skipped > 0)
         printf("\n(%d of %d sample points were outside the real-valued domain and skipped.)\n",

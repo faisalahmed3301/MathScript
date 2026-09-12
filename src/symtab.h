@@ -15,5 +15,7 @@ void    symtab_init(void);           /* registers pi, e */
 int     symtab_lookup(const char *name, double *out_value);
 void    symtab_set(const char *name, double value);
 void    symtab_dump(void); /* used by /symbols */
+int     symtab_is_constant(const char *name); /* true for pi, e */
+void    symtab_unset(const char *name);       /* remove a non-constant entry */
 
 #endif

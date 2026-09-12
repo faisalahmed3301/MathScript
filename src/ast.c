@@ -55,6 +55,23 @@ void ast_free(ASTNode *n) {
     free(n);
 }
 
+void ast_collect_vars(const ASTNode *n, char names[][64], int max, int *count) {
+    if (!n) return;
+    if (n->kind == N_VAR) {
+        for (int i = 0; i < *count; i++)
+            if (strcmp(names[i], n->name) == 0) return;
+        if (*count < max) {
+            strncpy(names[*count], n->name, 63);
+            names[*count][63] = '\0';
+            (*count)++;
+        }
+        return;
+    }
+    ast_collect_vars(n->left, names, max, count);
+    ast_collect_vars(n->right, names, max, count);
+    for (int i = 0; i < n->argc; i++) ast_collect_vars(n->args[i], names, max, count);
+}
+
 static const char *op_name(int op) {
     switch (op) {
         case '+': return "+";

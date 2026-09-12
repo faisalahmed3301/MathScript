@@ -13,8 +13,8 @@
  * side fails (undefined name, out-of-domain math, etc.). Always
  * called "quiet" (no error printed per sample) -- the caller has
  * already validated the equation once, loudly, before scanning. */
-static double difference_at(ASTNode *lhs, ASTNode *rhs, double x, int *ok) {
-    symtab_set("x", x);
+static double difference_at(ASTNode *lhs, ASTNode *rhs, const char *var_name, double x, int *ok) {
+    symtab_set(var_name, x);
     double a = eval(lhs, 1, ok);
     if (!*ok) return 0;
     double b = eval(rhs, 1, ok);
@@ -41,7 +41,7 @@ static int cmp_double(const void *a, const void *b) {
  * polynomials -- this is the "numerical method" mentioned as a
  * fallback in the architecture design for equations that are not
  * simple linear/quadratic forms. */
-static int bisection_scan(ASTNode *lhs, ASTNode *rhs, double lo, double hi,
+static int bisection_scan(ASTNode *lhs, ASTNode *rhs, const char *var_name, double lo, double hi,
                            int samples, double *roots) {
     int n = 0;
     int have_prev = 0;
@@ -51,7 +51,7 @@ static int bisection_scan(ASTNode *lhs, ASTNode *rhs, double lo, double hi,
     for (int i = 0; i <= samples; i++) {
         double x = lo + i * step;
         int ok = 1;
-        double f = difference_at(lhs, rhs, x, &ok);
+        double f = difference_at(lhs, rhs, var_name, x, &ok);
         if (!ok) { have_prev = 0; continue; }
 
         if (fabs(f) < 1e-7) {
@@ -61,12 +61,12 @@ static int bisection_scan(ASTNode *lhs, ASTNode *rhs, double lo, double hi,
             for (int iter = 0; iter < 60; iter++) {
                 double mid = (a + b) / 2;
                 int mok = 1;
-                double fm = difference_at(lhs, rhs, mid, &mok);
+                double fm = difference_at(lhs, rhs, var_name, mid, &mok);
                 if (!mok) break;
                 if (fabs(fm) < 1e-12) { a = b = mid; break; }
                 double fa;
                 int aok = 1;
-                fa = difference_at(lhs, rhs, a, &aok);
+                fa = difference_at(lhs, rhs, var_name, a, &aok);
                 if (aok && fa * fm < 0) b = mid; else a = mid;
             }
             n = add_root(roots, n, (a + b) / 2);
@@ -84,13 +84,33 @@ void solver_run(ASTNode *stmt, int show_tac) {
     ASTNode *lhs = stmt->left;
     ASTNode *rhs = stmt->right;
 
-    double saved_x; int had_x = symtab_lookup("x", &saved_x);
+    /* Find the one free variable to solve for (usually 'x', but any
+       single name works: "y^2 = 4" solves for y). Constants (pi, e)
+       don't count, and more than one free name is ambiguous. */
+    char names[8][64];
+    int name_count = 0;
+    ast_collect_vars(lhs, names, 8, &name_count);
+    ast_collect_vars(rhs, names, 8, &name_count);
+    int free_count = 0;
+    char var_name[64] = "x";
+    for (int i = 0; i < name_count; i++) {
+        if (symtab_is_constant(names[i])) continue;
+        if (free_count == 0) strncpy(var_name, names[i], 63);
+        free_count++;
+    }
+    if (free_count > 1) {
+        semantic_error("/eqn supports exactly one free variable, found %d (e.g. '%s' and '%s')",
+                        free_count, var_name, names[1]);
+        return;
+    }
+
+    double saved_x; int had_x = symtab_lookup(var_name, &saved_x);
 
     /* Validate once, loudly, so unknown functions/variables are
        reported clearly instead of silently skipped during scanning. */
     int ok = 1;
-    difference_at(lhs, rhs, 0.0, &ok);
-    if (!ok) { if (had_x) symtab_set("x", saved_x); return; }
+    difference_at(lhs, rhs, var_name, 0.0, &ok);
+    if (!ok) { if (had_x) symtab_set(var_name, saved_x); else symtab_unset(var_name); return; }
 
     /* --- IR: EQUATION lhs - rhs = 0 ; SOLVE ------------------- */
     TACProgram tac;
@@ -103,10 +123,10 @@ void solver_run(ASTNode *stmt, int show_tac) {
 
     /* --- Try an exact quadratic/linear fit first -------------- */
     int fit_ok = 1;
-    double f0  = difference_at(lhs, rhs, 0.0, &fit_ok);
-    double f1  = fit_ok ? difference_at(lhs, rhs, 1.0, &fit_ok) : 0;
-    double fm1 = fit_ok ? difference_at(lhs, rhs, -1.0, &fit_ok) : 0;
-    double f2  = fit_ok ? difference_at(lhs, rhs, 2.0, &fit_ok) : 0;
+    double f0  = difference_at(lhs, rhs, var_name, 0.0, &fit_ok);
+    double f1  = fit_ok ? difference_at(lhs, rhs, var_name, 1.0, &fit_ok) : 0;
+    double fm1 = fit_ok ? difference_at(lhs, rhs, var_name, -1.0, &fit_ok) : 0;
+    double f2  = fit_ok ? difference_at(lhs, rhs, var_name, 2.0, &fit_ok) : 0;
 
     double roots[MAX_ROOTS];
     int nroots = 0;
@@ -145,10 +165,10 @@ void solver_run(ASTNode *stmt, int show_tac) {
     if (!used_closed_form) {
         /* Not a plain linear/quadratic -- fall back to a numeric
            bisection scan over a generous default range. */
-        nroots = bisection_scan(lhs, rhs, -25.0, 25.0, 5000, roots);
+        nroots = bisection_scan(lhs, rhs, var_name, -25.0, 25.0, 5000, roots);
     }
 
-    if (had_x) symtab_set("x", saved_x);
+    if (had_x) symtab_set(var_name, saved_x); else symtab_unset(var_name);
 
     if (nroots == 0) {
         printf("No roots found in the search range [-25, 25].\n");
@@ -162,5 +182,5 @@ void solver_run(ASTNode *stmt, int show_tac) {
         printf("Roots:\n");
     }
     for (int i = 0; i < nroots; i++)
-        printf("x = %s\n", format_number(roots[i]));
+        printf("%s = %s\n", var_name, format_number(roots[i]));
 }

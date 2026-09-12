@@ -32,6 +32,13 @@ ASTNode *ast_call(const char *name, ASTNode **args, int argc);
 void ast_free(ASTNode *n);
 void ast_print(const ASTNode *n, int indent); /* debug / -ast dump */
 
+/* Collects up to max distinct N_VAR names read anywhere in the
+ * expression, in first-seen order, into names[][] (each up to 63
+ * chars). *count is set to how many were found. Used by graph.c
+ * and solver.c to find "the" free variable in an expression
+ * instead of assuming it is always called 'x'. */
+void ast_collect_vars(const ASTNode *n, char names[][64], int max, int *count);
+
 /* Token codes for the comparison operators (values > 255 so they
    never collide with a single character token like '+'). Bison's
    generated parser.tab.h defines the real values; these are only

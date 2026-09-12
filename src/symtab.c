@@ -43,6 +43,18 @@ void symtab_set(const char *name, double value) {
     count++;
 }
 
+int symtab_is_constant(const char *name) {
+    int i = find(name);
+    return i >= 0 && table[i].is_constant;
+}
+
+void symtab_unset(const char *name) {
+    int i = find(name);
+    if (i < 0 || table[i].is_constant) return;
+    for (int j = i; j < count - 1; j++) table[j] = table[j + 1];
+    count--;
+}
+
 void symtab_dump(void) {
     printf("+----------------------+---------------+\n");
     printf("| Name                 | Value         |\n");
