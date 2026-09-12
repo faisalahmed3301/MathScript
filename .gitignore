@@ -1,0 +1,8 @@
+build/*.c
+build/*.h
+build/mathscript
+build/mathscript.exe
+output/generated.c
+output/generated
+output/generated.exe
+*.o
