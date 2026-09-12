@@ -46,6 +46,9 @@ check "calc: syntax error"        "/calc\n10 + * 5\nexit\n/exit\n"              
 # /graph
 check "graph: parabola"           "/graph\ny = x^2\nexit\n/exit\n"                "Graph generated."
 check "graph: needs y ="          "/graph\n2 + 2\nexit\n/exit\n"                  "Semantic Error"
+check "graph: implicit mult y=5x" "/graph\ny=5x\nexit\n/exit\n"                   "t1 = 5 * x"
+check "graph: bare eqn 3x=1"      "/graph\n3x=1\nexit\n/exit\n"                  "x = 0.333333"
+check "graph: two-variable line"  "/graph\n3*x + 2*y = 6\nexit\n/exit\n"          "implicit relation"
 
 # /eqn
 check "eqn: linear"               "/eqn\n2*x + 5 = 15\nexit\n/exit\n"             "x = 5"
@@ -53,6 +56,12 @@ check "eqn: quadratic"            "/eqn\nx^2 - 5*x + 6 = 0\nexit\n/exit\n"      
 check "eqn: quadratic root 2"     "/eqn\nx^2 - 5*x + 6 = 0\nexit\n/exit\n"        "x = 3"
 check "eqn: difference of squares" "/eqn\nx^2 - 4 = 0\nexit\n/exit\n"             "x = -2"
 check "eqn: cubic"                "/eqn\nx^3 - x = 0\nexit\n/exit\n"             "x = 0"
+check "eqn: variable named y"     "/eqn\ny^2 = 4\nexit\n/exit\n"                  "y = 2"
+check "eqn: implicit mult 3x=1"   "/eqn\n3x=1\nexit\n/exit\n"                    "x = 0.333333"
+
+# power / implicit multiplication (previously reported as "power not working")
+check "calc: pow with y"          "/calc\ny = 3\npow(y,2)\nexit\n/exit\n"        "9"
+check "calc: implicit mult 2(3+4)" "/calc\n2(3+4)\nexit\n/exit\n"                "14"
 
 # mode discipline
 check "no mode active"            "2 + 2\n/exit\n"                                "No mode active"

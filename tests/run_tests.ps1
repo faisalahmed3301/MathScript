@@ -49,6 +49,9 @@ Check "calc: syntax error"       @("/calc", "10 + * 5", "exit", "/exit")        
 # /graph
 Check "graph: parabola"          @("/graph", "y = x^2", "exit", "/exit")           "Graph generated."
 Check "graph: needs y ="         @("/graph", "2 + 2", "exit", "/exit")             "Semantic Error"
+Check "graph: implicit mult y=5x" @("/graph", "y=5x", "exit", "/exit")             "t1 = 5 * x"
+Check "graph: bare eqn 3x=1"     @("/graph", "3x=1", "exit", "/exit")              "x = 0.333333"
+Check "graph: two-variable line" @("/graph", "3*x + 2*y = 6", "exit", "/exit")     "implicit relation"
 
 # /eqn
 Check "eqn: linear"                @("/eqn", "2*x + 5 = 15", "exit", "/exit")      "x = 5"
@@ -56,6 +59,12 @@ Check "eqn: quadratic root 2"      @("/eqn", "x^2 - 5*x + 6 = 0", "exit", "/exit
 Check "eqn: quadratic root 3"      @("/eqn", "x^2 - 5*x + 6 = 0", "exit", "/exit") "x = 3"
 Check "eqn: difference of squares" @("/eqn", "x^2 - 4 = 0", "exit", "/exit")       "x = -2"
 Check "eqn: cubic"                 @("/eqn", "x^3 - x = 0", "exit", "/exit")       "x = 0"
+Check "eqn: variable named y"      @("/eqn", "y^2 = 4", "exit", "/exit")           "y = 2"
+Check "eqn: implicit mult 3x=1"    @("/eqn", "3x=1", "exit", "/exit")              "x = 0.333333"
+
+# power / implicit multiplication (previously reported as "power not working")
+Check "calc: pow with y"          @("/calc", "y = 3", "pow(y,2)", "exit", "/exit") "9"
+Check "calc: implicit mult 2(3+4)" @("/calc", "2(3+4)", "exit", "/exit")           "14"
 
 # mode discipline
 Check "no mode active"           @("2 + 2", "/exit")                              "No mode active"

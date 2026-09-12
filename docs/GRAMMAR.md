@@ -32,6 +32,8 @@ expr         -> expr '+' expr
              |  NUMBER
              |  IDENTIFIER
              |  IDENTIFIER '(' arglist ')'     (function call)
+             |  NUMBER IDENTIFIER              (implicit multiply: "3x")
+             |  NUMBER '(' expr ')'            (implicit multiply: "3(x+1)")
 
 arglist      -> /* empty */
              |  expr
@@ -54,16 +56,36 @@ turned out to need three copies of the same expression grammar. Instead,
 | `/calc` | `2 + 3 * 4`                | `expr`                         |
 | `/calc` | `x = 10`                   | `expr '=' expr` (LHS is a var) |
 | `/graph`| `y = x^2`                  | `expr '=' expr` (LHS is `y`)   |
+| `/graph`| `3*x = 1`                  | `expr '=' expr` (one other free variable) |
+| `/graph`| `x^2 + y^2 = 25`           | `expr '=' expr` (two free variables) |
 | `/eqn`  | `x^2 - 5*x + 6 = 0`        | `expr '=' expr`                |
 
 Bison parses the SAME statement shape in every mode; `main.c` looks at
 which mode is currently active and dispatches the resulting AST to
 `calc.c`, `graph.c`, or `solver.c` accordingly. Each backend then
-applies its own semantic rule (e.g. `graph.c` requires the left side
-of `=` to be the identifier `y`; `calc.c` requires it to be *some*
-plain identifier). This keeps the grammar itself small while still
-statically catching real syntax errors (`10 + * 5` is invalid in
-every mode, and Bison rejects it before any mode-specific code runs).
+applies its own semantic rule. This keeps the grammar itself small
+while still statically catching real syntax errors (`10 + * 5` is
+invalid in every mode, and Bison rejects it before any mode-specific
+code runs).
+
+### `/graph` accepts more than "y = ..."
+
+`graph.c` looks at the parsed `expr = expr` and counts its distinct
+free variables (via `ast_collect_vars()`, ignoring the constants `pi`
+and `e`) to decide which of three things to do:
+
+| Shape | Example | Behavior |
+|-------|---------|----------|
+| LHS is literally `y` | `y = x^2` | plot `y` as a curve over the one free variable on the right |
+| exactly one free variable, LHS isn't `y` | `3*x = 1` | solved like `/eqn` (reusing `rootfind.c`) and shown as point(s) on a number line |
+| exactly two free variables | `x^2 + y^2 = 25` | an implicit relation: for each sampled value of one variable, `rootfind_solve()` finds every value of the other that satisfies the equation, so a circle's two branches both get plotted |
+| more than two free variables | `a + b + c = 1` | rejected with a Semantic Error -- nothing to hold fixed |
+
+The vertical range is intentionally **not** auto-fit tightly to each
+function's own data. It defaults to a fixed `[-50, 50]` and only grows
+if the data does not fit -- otherwise a gently-sloped line (`y = x`)
+and a steep one (`y = 5*x`) would each get independently stretched to
+fill the same frame and look identically steep.
 
 ## Tokens produced by the lexer (`src/lexer.l`)
 
@@ -93,6 +115,7 @@ Any other character is rejected by the lexer's catch-all rule with a
 | `/calc` backend       | `src/calc.c`    |
 | `/graph` backend      | `src/graph.c`   |
 | `/eqn` backend        | `src/solver.c`  |
+| Shared root-finder (`/eqn` + implicit `/graph`) | `src/rootfind.c` |
 | Target code generation| `src/codegen.c` |
 | Error reporting        | `src/errors.h/.c` |
 | REPL / script driver  | `src/main.c`    |

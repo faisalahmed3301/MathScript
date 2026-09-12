@@ -60,12 +60,18 @@ static const char *GRAMMAR_TEXT =
 "               |  NUMBER\n"
 "               |  IDENTIFIER\n"
 "               |  IDENTIFIER '(' arglist ')'     (function call)\n"
+"               |  NUMBER IDENTIFIER              (implicit multiply: \"3x\")\n"
+"               |  NUMBER '(' expr ')'            (implicit multiply: \"3(x+1)\")\n"
 "\n"
 "  arglist     -> (empty) | expr | arglist ',' expr\n"
 "\n"
 "The SAME grammar is used for /calc, /graph and /eqn. The active\n"
 "mode only changes how main.c interprets an already-parsed\n"
-"statement (see calc.c, graph.c, solver.c). See src/parser.y.\n";
+"statement (see calc.c, graph.c, solver.c). /graph in particular\n"
+"accepts any 'expr = expr': \"y = f(x)\" plots a curve, an equation\n"
+"in one other variable (e.g. \"3*x = 1\") is solved and shown on a\n"
+"number line, and an equation in two variables (e.g. \"x^2+y^2=25\")\n"
+"is plotted as an implicit curve. See src/parser.y.\n";
 
 static const char *PRECEDENCE_TEXT =
 "Operator precedence (as declared in parser.y), LOWEST to HIGHEST:\n"
@@ -111,7 +117,12 @@ static const char *HELP_TEXT =
 "  <expression>       evaluate / plot / solve, depending on the mode\n"
 "  gen <expression>   (calc mode only) also generate + compile + run\n"
 "                     equivalent C code, to demonstrate code generation\n"
-"  exit               leave the current mode\n";
+"  exit               leave the current mode\n"
+"\n"
+"/graph accepts more than just \"y = ...\":\n"
+"  y = x^2            a curve: y as a function of one variable\n"
+"  3*x = 1  (or 3x=1) an equation in one variable -> solved, shown on a number line\n"
+"  x^2 + y^2 = 25     an equation in two variables -> plotted as an implicit curve\n";
 
 static const char *mode_prompt(void) {
     switch (g_mode) {

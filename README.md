@@ -101,17 +101,28 @@ to print the operator precedence table with worked examples, and
 | Category      | Examples |
 |----------------|----------|
 | Arithmetic     | `+  -  *  /  ^` |
+| Implicit multiply | `3x` or `3(x+1)` (same as `3*x`, `3*(x+1)`) |
 | Comparisons    | `<  >  >=  <=  ==  !=` |
 | Functions      | `sqrt(x) abs(x) pow(x,y) sin(x) cos(x) tan(x) log(x)` |
 | Constants      | `pi  e` |
-| Variables      | `x = 10` (only in `/calc`) |
+| Variables      | `x = 10` (only in `/calc`; any letter works, not just `x`/`y`) |
 | Grouping       | `(2 + 3) * 4` |
 
 Three modes, one grammar (see `docs/GRAMMAR.md`):
 
 - **`/calc`** -- evaluate an expression, or assign a variable: `x = 10`
-- **`/graph`** -- plot `y = <expression in x>` as an ASCII graph
-- **`/eqn`** -- solve `<expr> = <expr>` for `x`; prints all real roots
+- **`/graph`** -- plots `y = <expression>` as an ASCII curve; also accepts
+  a bare equation in one variable (`3*x = 1`, solved and shown on a number
+  line) or in two variables (`x^2 + y^2 = 25`, plotted as an implicit
+  curve like a line or circle)
+- **`/eqn`** -- solve `<expr> = <expr>` for whichever single variable it
+  uses (defaults to `x` if the equation is a constant); prints all real roots
+
+`/graph`'s vertical range defaults to a fixed `[-50, 50]` (expanding only
+if the data needs more) instead of auto-fitting to each function's own
+min/max -- otherwise a shallow line and a steep one would each get
+stretched to fill the frame and look equally steep. The curve itself is
+drawn with `.`; axes are drawn with `|`, `-`, and `+` at the origin.
 
 Inside `/calc`, prefix a line with `gen ` (e.g. `gen (5+3)*2`) to
 additionally generate an equivalent C program, compile it with the
@@ -131,8 +142,9 @@ MathScript/
 │   ├── eval.h / .c        AST evaluator + semantic checks
 │   ├── ir.h / .c          AST -> Three-Address Code (IR)
 │   ├── calc.h / .c        /calc backend
-│   ├── graph.h / .c       /graph backend (ASCII plot)
-│   ├── solver.h / .c      /eqn backend (closed-form + bisection fallback)
+│   ├── graph.h / .c       /graph backend (ASCII plot: curves, 1- and 2-variable equations)
+│   ├── solver.h / .c      /eqn backend
+│   ├── rootfind.h / .c    shared root-finder (closed-form + bisection fallback)
 │   ├── codegen.h / .c     TAC -> C source -> compile -> run
 │   ├── util.h / .c        Shared number formatting
 │   └── main.c             REPL / script driver, mode dispatch

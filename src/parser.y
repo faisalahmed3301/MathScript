@@ -20,6 +20,8 @@
                    |  NUMBER
                    |  IDENTIFIER
                    |  IDENTIFIER '(' arglist ')'     (function call)
+                   |  NUMBER IDENTIFIER              (implicit multiply: "3x")
+                   |  NUMBER '(' expr ')'            (implicit multiply: "3(x+1)")
 
    The SAME grammar parses /calc, /graph and /eqn input -- the
    REPL (main.c) decides what a parsed line MEANS once it knows
@@ -105,6 +107,13 @@ expr
     | IDENTIFIER '(' arglist ')' {
                              $$ = ast_call($1, $3.items, $3.count);
                              free($1);
+                         }
+    | NUMBER IDENTIFIER %prec '*' {
+                             $$ = ast_binop('*', ast_num($1), ast_var($2));
+                             free($2);
+                         }
+    | NUMBER '(' expr ')' %prec '*' {
+                             $$ = ast_binop('*', ast_num($1), $3);
                          }
     ;
 

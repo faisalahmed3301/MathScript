@@ -20,11 +20,13 @@ pow(2, 10)
 sin(pi / 2)
 log(e)
 
-# Variables
+# Variables (and implicit multiplication: "2x" means "2*x")
 x = 10
 a = 5
 result = x + a
 result
+2x
+3(x + 1)
 
 # Errors (each is caught and reported, execution continues)
 10 / 0
