@@ -105,7 +105,7 @@ static const char *HELP_TEXT =
 "MathScript commands:\n"
 "  /calc            enter calculation mode\n"
 "  /graph           enter graph mode\n"
-"  /eqn             enter equation-solving mode\n"
+"  /eqn             solve in x, y, z, etc.; degree 1-3 includes complex roots\n"
 "  /help            show this help\n"
 "  /grammar         print the MathScript grammar (BNF)\n"
 "  /precedence      print the operator precedence table + explanation\n"
@@ -121,6 +121,9 @@ static const char *HELP_TEXT =
 "\n"
 "/graph accepts more than just \"y = ...\":\n"
 "  y = x^2            a curve: y as a function of one variable\n"
+"  y^2 or y^3         a sideways curve: shorthand for x = f(y)\n"
+"  pow(y,2), pow(y,3) equivalent power-function syntax\n"
+"  y^2 = x            an implicit curve with both real branches\n"
 "  3*x = 1  (or 3x=1) an equation in one variable -> solved, shown on a number line\n"
 "  x^2 + y^2 = 25     an equation in two variables -> plotted as an implicit curve\n";
 

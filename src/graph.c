@@ -10,18 +10,19 @@
 #include "util.h"
 #include "rootfind.h"
 
-#define GRAPH_WIDTH   61   /* columns sampled across the horizontal range */
-#define GRAPH_HEIGHT  21   /* rows of the ASCII plot                       */
+#define GRAPH_WIDTH   200  /* columns sampled across the horizontal range */
+#define GRAPH_HEIGHT  75  /* rows of the ASCII plot                       */
 #define AXIS_LO      -10.0 /* horizontal (plotted-variable) range          */
 #define AXIS_HI       10.0
-/* The vertical range is NOT auto-fit tightly to each function's own
- * data -- that hid slope differences entirely (a gently-sloped line
- * and a steep one both got stretched to fill the same frame). It is
- * fixed to this window by default and only grows if the data does
- * not fit, so "y = 5*x" visibly fills the frame while "y = x" only
- * uses a fraction of it. */
-#define Y_DEFAULT_LO -50.0
+/* Monospace terminal cells are usually about twice as tall as wide.
+ * Match physical distance per math unit on both axes, independent of the
+ * canvas dimensions. This keeps circles round and slopes proportional. */
+#define CELL_HEIGHT_TO_WIDTH 2.0
+#define VIEW_Y_HI ((AXIS_HI - AXIS_LO) * CELL_HEIGHT_TO_WIDTH * (GRAPH_HEIGHT - 1) / (2.0 * (GRAPH_WIDTH - 1)))
+#define VIEW_Y_LO (-VIEW_Y_HI)
+#define Y_DEFAULT_LO -50.0  /* implicit root search, independent of viewport */
 #define Y_DEFAULT_HI  50.0
+#define GRAPH_SAMPLES ((GRAPH_WIDTH - 1) * 16 + 1)
 #define MAX_PTS_PER_COL 4  /* an implicit curve (e.g. a circle) can have more than one y per x */
 
 typedef struct {
@@ -29,53 +30,64 @@ typedef struct {
     int n;
 } Column;
 
-/* Shared ASCII renderer for every /graph shape: a plain function
- * y = f(x), a one-variable equation solved to a set of points, or a
- * two-variable implicit relation (0..MAX_PTS_PER_COL y's per column). */
-static void render(const char *h_name, const Column *cols, double h_lo, double h_hi) {
-    double ymin = Y_DEFAULT_LO, ymax = Y_DEFAULT_HI;
-    int any = 0;
-    for (int i = 0; i < GRAPH_WIDTH; i++)
-        for (int j = 0; j < cols[i].n; j++) {
-            any = 1;
-            if (cols[i].y[j] < ymin) ymin = cols[i].y[j];
-            if (cols[i].y[j] > ymax) ymax = cols[i].y[j];
-        }
-    if (!any) {
-        math_error("no points of this equation lie in the plotted range");
-        return;
-    }
-
+/* Dense samples draw the curve with dots directly, without joining across
+ * poles or undefined regions. Off-screen values are clipped, never clamped
+ * onto the frame or used to stretch the axes. */
+static void render(const char *h_name, const char *v_name, const Column *cols) {
     static char canvas[GRAPH_HEIGHT][GRAPH_WIDTH + 1];
+    /* Map the origin exactly like curve samples, including odd row counts. */
+    int zero_row = (int)round(VIEW_Y_HI / (VIEW_Y_HI - VIEW_Y_LO) * (GRAPH_HEIGHT - 1));
+    int zero_col = (int)round(-AXIS_LO / (AXIS_HI - AXIS_LO) * (GRAPH_WIDTH - 1));
     for (int r = 0; r < GRAPH_HEIGHT; r++) {
         memset(canvas[r], ' ', GRAPH_WIDTH);
         canvas[r][GRAPH_WIDTH] = '\0';
     }
+    for (int c = 0; c < GRAPH_WIDTH; c++) canvas[zero_row][c] = '-';
+    for (int r = 0; r < GRAPH_HEIGHT; r++) canvas[r][zero_col] = '|';
+    canvas[zero_row][zero_col] = '+';
 
-    int zero_row = -1;
-    if (ymin <= 0 && ymax >= 0)
-        zero_row = (int)round((ymax - 0) / (ymax - ymin) * (GRAPH_HEIGHT - 1));
-    int zero_col = -1;
-    if (h_lo <= 0 && h_hi >= 0)
-        zero_col = (int)round((0 - h_lo) / (h_hi - h_lo) * (GRAPH_WIDTH - 1));
-
-    if (zero_row >= 0) for (int c = 0; c < GRAPH_WIDTH; c++) if (canvas[zero_row][c] == ' ') canvas[zero_row][c] = '-';
-    if (zero_col >= 0) for (int r = 0; r < GRAPH_HEIGHT; r++) if (canvas[r][zero_col] == ' ') canvas[r][zero_col] = '|';
-    if (zero_row >= 0 && zero_col >= 0) canvas[zero_row][zero_col] = '+';
-
-    for (int i = 0; i < GRAPH_WIDTH; i++)
+    int visible = 0, clipped = 0;
+    for (int i = 0; i < GRAPH_SAMPLES; i++) {
+        int col = (int)round(i * (GRAPH_WIDTH - 1.0) / (GRAPH_SAMPLES - 1));
         for (int j = 0; j < cols[i].n; j++) {
-            int row = (int)round((ymax - cols[i].y[j]) / (ymax - ymin) * (GRAPH_HEIGHT - 1));
-            if (row < 0) row = 0;
-            if (row >= GRAPH_HEIGHT) row = GRAPH_HEIGHT - 1;
-            canvas[row][i] = '.';
+            double y = cols[i].y[j];
+            if (!isfinite(y)) continue;
+            if (y < VIEW_Y_LO || y > VIEW_Y_HI) { clipped++; continue; }
+            int row = (int)round((VIEW_Y_HI - y) / (VIEW_Y_HI - VIEW_Y_LO) * (GRAPH_HEIGHT - 1));
+            canvas[row][col] = '.';
+            visible++;
         }
+    }
 
-    printf("\nPlot (%s from %g to %g, y from %s to %s):\n", h_name, h_lo, h_hi,
-           format_number(ymin), format_number(ymax));
-    for (int r = 0; r < GRAPH_HEIGHT; r++)
-        printf("  %s\n", canvas[r]);
-    printf("  (y-axis: %s=0 marked '|', x-axis: y=0 marked '-', curve marked '.')\n", h_name);
+    printf("\nPlot (%s from %g to %g, %s from %g to %g):\n",
+           h_name, AXIS_LO, AXIS_HI, v_name, VIEW_Y_LO, VIEW_Y_HI);
+    printf("  %s  |  %d x %d canvas\n", v_name, GRAPH_WIDTH, GRAPH_HEIGHT);
+    for (int r = 0; r < GRAPH_HEIGHT; r++) {
+        /* Label whole coordinate values at their actual projected rows. */
+        int has_tick = 0;
+        double tick_value = 0;
+        for (double value = ceil(VIEW_Y_LO / 2) * 2; value <= VIEW_Y_HI; value += 2) {
+            int tick_row = (int)round((VIEW_Y_HI - value) / (VIEW_Y_HI - VIEW_Y_LO) * (GRAPH_HEIGHT - 1));
+            if (tick_row == r) { has_tick = 1; tick_value = value; break; }
+        }
+        if (has_tick) printf("  %8g  ", tick_value);
+        else printf("            ");
+        printf("%s\n", canvas[r]);
+    }
+    char labels[GRAPH_WIDTH + 1];
+    memset(labels, ' ', GRAPH_WIDTH); labels[GRAPH_WIDTH] = '\0';
+    for (int k = 0; k <= 10; k++) {
+        char label[16];
+        snprintf(label, sizeof(label), "%g", AXIS_LO + k * (AXIS_HI - AXIS_LO) / 10);
+        int len = (int)strlen(label), pos = (int)round(k * (GRAPH_WIDTH - 1) / 10.0) - len / 2;
+        if (pos < 0) pos = 0;
+        if (pos + len > GRAPH_WIDTH) pos = GRAPH_WIDTH - len;
+        memcpy(labels + pos, label, len);
+    }
+    printf("            %s  %s\n", labels, h_name);
+    printf("  Curve: .   Axes: | - +   (equal unit scale for 2:1 terminal cells)\n");
+    if (clipped) printf("  Portions outside the visible range are clipped.\n");
+    if (!visible) printf("  No real curve points in this view.\n");
 }
 
 /* Finds the free variables (excluding constants pi/e) across an
@@ -113,8 +125,8 @@ static void graph_function(ASTNode *rhs, int show_tac) {
     double saved; int had = symtab_lookup(var_name, &saved);
     symtab_set(var_name, 1.0);
     int ok = 1;
-    eval(rhs, 0, &ok);
-    if (!ok) { if (had) symtab_set(var_name, saved); else symtab_unset(var_name); return; }
+    eval(rhs, 1, &ok);
+    if (g_semantic_error) { if (had) symtab_set(var_name, saved); else symtab_unset(var_name); return; }
 
     TACProgram tac;
     tac_init(&tac);
@@ -122,36 +134,36 @@ static void graph_function(ASTNode *rhs, int show_tac) {
     tac_finish_graph(&tac, operand, var_name);
     if (show_tac) { printf("IR (TAC):\n"); tac_print(&tac); }
 
-    static Column cols[GRAPH_WIDTH];
-    double xs[GRAPH_WIDTH];
+    static Column cols[GRAPH_SAMPLES];
+    double xs[GRAPH_SAMPLES];
     int skipped = 0;
-    double step = (AXIS_HI - AXIS_LO) / (GRAPH_WIDTH - 1);
+    double step = (AXIS_HI - AXIS_LO) / (GRAPH_SAMPLES - 1);
 
-    for (int i = 0; i < GRAPH_WIDTH; i++) {
+    for (int i = 0; i < GRAPH_SAMPLES; i++) {
         double x = AXIS_LO + i * step;
         xs[i] = x;
         symtab_set(var_name, x);
         int pok = 1;
         double y = eval(rhs, 1, &pok);
-        if (pok) { cols[i].y[0] = y; cols[i].n = 1; }
+        if (pok && isfinite(y)) { cols[i].y[0] = y; cols[i].n = 1; }
         else { cols[i].n = 0; skipped++; }
     }
     if (had) symtab_set(var_name, saved); else symtab_unset(var_name);
 
     printf("Graph generated.\n\n");
     printf("Sample points:\n");
-    for (int i = 0; i < GRAPH_WIDTH; i += (GRAPH_WIDTH - 1) / 8) {
+    for (int i = 0; i < GRAPH_SAMPLES; i += (GRAPH_SAMPLES - 1) / 8) {
         if (cols[i].n)
             printf("  %s = %-6s -> y = %s\n", var_name, format_number(xs[i]), format_number(cols[i].y[0]));
         else
             printf("  %s = %-6s -> y = (undefined)\n", var_name, format_number(xs[i]));
     }
 
-    render(var_name, cols, AXIS_LO, AXIS_HI);
+    render(var_name, "y", cols);
 
     if (skipped > 0)
         printf("\n(%d of %d sample points were outside the real-valued domain and skipped.)\n",
-               skipped, GRAPH_WIDTH);
+               skipped, GRAPH_SAMPLES);
 }
 
 /* --- an equation in exactly one variable, no dependent 'y' ------
@@ -163,8 +175,8 @@ static void graph_equation_1var(ASTNode *lhs, ASTNode *rhs, const char *var_name
     symtab_set(var_name, 0.0);
     int ok = 1;
     eval(lhs, 0, &ok);
-    if (ok) eval(rhs, 0, &ok);
-    if (!ok) { if (had) symtab_set(var_name, saved); else symtab_unset(var_name); return; }
+    if (ok) eval(rhs, 1, &ok);
+    if (g_semantic_error) { if (had) symtab_set(var_name, saved); else symtab_unset(var_name); return; }
 
     TACProgram tac;
     tac_init(&tac);
@@ -238,9 +250,9 @@ static void graph_equation_2var(ASTNode *lhs, ASTNode *rhs, const char *h_name, 
 
     printf("Graph generated (implicit relation in %s and %s).\n", h_name, v_name);
 
-    static Column cols[GRAPH_WIDTH];
-    double step = (AXIS_HI - AXIS_LO) / (GRAPH_WIDTH - 1);
-    for (int i = 0; i < GRAPH_WIDTH; i++) {
+    static Column cols[GRAPH_SAMPLES];
+    double step = (AXIS_HI - AXIS_LO) / (GRAPH_SAMPLES - 1);
+    for (int i = 0; i < GRAPH_SAMPLES; i++) {
         double h = AXIS_LO + i * step;
         symtab_set(h_name, h);
         double roots[ROOTFIND_MAX];
@@ -253,15 +265,41 @@ static void graph_equation_2var(ASTNode *lhs, ASTNode *rhs, const char *h_name, 
         }
     }
 
+    /* Keep readable coordinate samples independent of canvas resolution. */
+    printf("\nSample points (%s, %s):\n", h_name, v_name);
+    for (int i = 0; i <= 10; i++) {
+        double h = AXIS_LO + i * (AXIS_HI - AXIS_LO) / 10;
+        symtab_set(h_name, h);
+        double roots[ROOTFIND_MAX];
+        int rok = 1;
+        int n = rootfind_solve(lhs, rhs, v_name, Y_DEFAULT_LO, Y_DEFAULT_HI, 400, roots, &rok);
+        if (rok)
+            for (int j = 0; j < n && j < MAX_PTS_PER_COL; j++)
+                printf("  (%s, %s)\n", format_number(h), format_number(roots[j]));
+    }
     if (had_h) symtab_set(h_name, saved_h); else symtab_unset(h_name);
     if (had_v) symtab_set(v_name, saved_v); else symtab_unset(v_name);
 
-    render(h_name, cols, AXIS_LO, AXIS_HI);
+    render(h_name, v_name, cols);
 }
 
 void graph_run(ASTNode *stmt, int show_tac) {
     if (stmt->kind != N_BINOP || stmt->op != '=') {
-        semantic_error("/graph mode expects an equation, e.g. y = x^2, 3*x = 1, or x^2 + y^2 = 25");
+        char names[8][64];
+        int n = free_vars(stmt, NULL, names);
+        if (n != 1) {
+            semantic_error("/graph expects a single-variable expression or an equation, e.g. y^2, y^3 = x, or y = x^2");
+            return;
+        }
+        if (strcmp(names[0], "y") == 0) {
+            /* A bare function of y means x = f(y). Borrow stmt;
+             * only the temporary x node belongs to this call. */
+            ASTNode *x = ast_var("x");
+            graph_equation_2var(x, stmt, "x", "y", show_tac);
+            ast_free(x);
+        } else {
+            graph_function(stmt, show_tac);
+        }
         return;
     }
     ASTNode *lhs = stmt->left;
@@ -270,7 +308,12 @@ void graph_run(ASTNode *stmt, int show_tac) {
     /* The common, documented shape: an explicit function of one
        variable assigned to 'y'. Kept as its own fast path since it
        is the primary, best-tested feature. */
-    if (lhs->kind == N_VAR && strcmp(lhs->name, "y") == 0) {
+    char rhs_names[8][64];
+    int rhs_count = free_vars(rhs, NULL, rhs_names);
+    int rhs_has_y = 0;
+    for (int i = 0; i < rhs_count; i++)
+        if (strcmp(rhs_names[i], "y") == 0) rhs_has_y = 1;
+    if (lhs->kind == N_VAR && strcmp(lhs->name, "y") == 0 && !rhs_has_y) {
         graph_function(rhs, show_tac);
         return;
     }

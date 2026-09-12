@@ -1,0 +1,918 @@
+\documentclass[11pt,a4paper]{report}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=24mm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs,tabularx,array}
+\usepackage{xcolor,listings}
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage{hyperref}
+\definecolor{ink}{HTML}{16324F}
+\definecolor{paperblue}{HTML}{F3F6FA}
+\definecolor{codegreen}{HTML}{246044}
+\hypersetup{colorlinks=true,linkcolor=ink,urlcolor=ink,pdftitle={MathScript: Precedence and Function Evaluation}}
+\lstset{basicstyle=\ttfamily\small,keywordstyle=\color{ink}\bfseries,
+ commentstyle=\color{codegreen},stringstyle=\color{codegreen},
+ backgroundcolor=\color{paperblue},frame=single,rulecolor=\color{ink!20},
+ breaklines=true,columns=fullflexible,keepspaces=true,showstringspaces=false,
+ tabsize=4,aboveskip=10pt,belowskip=10pt}
+\setlist{itemsep=4pt,topsep=6pt}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+\setlength{\emergencystretch}{3em}
+\newcommand{\file}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\say}[1]{\begin{quote}\textbf{Say it simply:} #1\end{quote}}
+\newcommand{\qa}[2]{\subsection*{#1}#2}
+\begin{document}
+\begin{titlepage}
+\vspace*{18mm}
+{\Huge\bfseries\color{ink} MathScript\par}
+\vspace{5mm}
+{\LARGE Operator Precedence\par and Function Evaluation\par}
+\vspace{10mm}
+{\Large A code-based study guide for your viva\par}
+\vspace{12mm}
+\hrule
+\vspace{6mm}
+This guide explains two questions from the actual MathScript implementation:
+\begin{enumerate}
+\item How does the compiler decide operator precedence and associativity?
+\item How do \texttt{sqrt}, \texttt{pow}, and the other built-in functions work, from source text to result?
+\end{enumerate}
+The explanations use simple English, short code extracts, expression trees,
+worked calculations, and answers you can say aloud. The source files are
+listed beside the relevant explanations so you know what to open during a demonstration.
+\vfill
+\textbf{Code snapshot:} MathScript source reviewed on 12 September 2026.\\
+\textbf{Reading plan:} First read Chapters 1--4. Then rehearse the demonstration
+in Chapter 7 and the questions in Chapter 8. Use the appendix when you need the complete evaluator.
+\end{titlepage}
+\tableofcontents
+
+\chapter{The whole idea before the details}
+\section{What MathScript does}
+MathScript reads a line, understands its structure, and evaluates, plots, or
+solves it according to the selected mode. Flex supplies the lexical analyzer;
+Bison generates the parser; the remaining logic is written in C.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+Stage & Responsibility in this project\\
+\midrule
+Lexer & \file{src/lexer.l}: turn characters into tokens.\\
+Parser & \file{src/parser.y}: recognize grammar rules and construct an AST.\\
+AST & \file{src/ast.h}, \file{src/ast.c}: store the expression as a tree.\\
+Evaluation & \file{src/eval.c}: recursively calculate values and perform semantic and mathematical checks.\\
+Mode handling & \file{src/calc.c}, \file{src/graph.c}, \file{src/solver.c}: interpret the statement for the active mode.\\
+Printed IR & \file{src/ir.c}: walk the AST and print three-address code (TAC).\\
+C generation & \file{src/codegen.c}: walk the AST to produce a separate C program for \texttt{gen}.\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\textbf{An important implementation detail:} normal calculation uses the AST
+evaluator directly. TAC is a separate representation printed from the AST.
+The current C generator also traverses the AST; it does not read the printed
+TAC. Both outputs express the operations in the same parsed tree.
+
+\say{The lexer recognizes the pieces, the parser decides their structure,
+and the evaluator calculates the value of that structure.}
+
+\section{Five useful words}
+\begin{description}
+\item[Token] A recognized piece such as a number, identifier, or plus sign.
+\item[Grammar rule] A valid pattern, such as an expression followed by
+\texttt{+} and another expression.
+\item[AST] Abstract syntax tree: a compact tree of the meaningful operations.
+\item[Precedence] Which operator binds more tightly when different operators occur together.
+\item[Associativity] How repeated operators at the same precedence level group.
+\end{description}
+For \texttt{2 + 3 * 4}, precedence produces the tree for $2+(3\times4)$.
+For \texttt{10 - 3 - 2}, associativity produces the tree for $(10-3)-2$.
+
+\chapter{Operator precedence: the exact mechanism}
+\section{The five declarations to show your professor}
+Open \file{src/parser.y}. These are the current declarations, in their actual order:
+\begin{lstlisting}
+%left '<' '>' GE LE EQ NE
+%left '+' '-'
+%left '*' '/'
+%right UMINUS
+%right '^'
+\end{lstlisting}
+\textbf{Read from top to bottom: later declarations have higher precedence.}
+Operators on the same line have equal precedence. \texttt{GE}, \texttt{LE},
+\texttt{EQ}, and \texttt{NE} represent \texttt{>=}, \texttt{<=},
+\texttt{==}, and \texttt{!=}.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}clX@{}}
+\toprule
+Level & Operators & Grouping rule\\
+\midrule
+1, lowest & \texttt{< > >= <= == !=} & Left associative\\
+2 & \texttt{+ -} & Left associative\\
+3 & \texttt{* /} & Left associative\\
+4 & Unary \texttt{-} & Uses the artificial precedence symbol \texttt{UMINUS}\\
+5, highest declared & \texttt{\char94} & Right associative\\
+\bottomrule
+\end{tabularx}
+\end{center}
+Parentheses and function calls are handled by their grammar productions.
+They do not need an additional line in this operator table.
+
+\say{I declare precedence in Bison from lowest to highest. Multiplication
+is below exponentiation but above addition. The parser uses these declarations
+when constructing the AST.}
+
+\section{Why the grammar needs these declarations}
+The expression grammar includes:
+\begin{lstlisting}
+expr : expr '+' expr { $$ = ast_binop('+', $1, $3); }
+     | expr '*' expr { $$ = ast_binop('*', $1, $3); }
+     ;
+\end{lstlisting}
+This is an extract, not the complete grammar. Without additional precedence
+information, the pattern \texttt{expr operator expr} allows more than one
+structure for \texttt{2 + 3 * 4}:
+\[
+(2+3)\times4=20,\qquad 2+(3\times4)=14.
+\]
+The declarations resolve this ambiguity. Bison generates parser tables from
+the grammar and declarations when the project is built.
+
+\section{Shift and reduce, explained simply}
+Suppose the parser has recognized \texttt{2 + 3} and the next token is
+\texttt{*}. It has two possible actions:
+\begin{itemize}
+\item \textbf{Reduce:} treat \texttt{2 + 3} as a completed expression now.
+\item \textbf{Shift:} read the next token and continue building the expression.
+\end{itemize}
+Because \texttt{*} has higher precedence than \texttt{+}, Bison chooses to
+shift in this conflict. The multiplication becomes part of the right operand
+of the addition.
+
+In a shift/reduce conflict where both precedences are known:
+\begin{enumerate}
+\item Higher token precedence: shift.
+\item Higher rule precedence: reduce.
+\item Equal precedence with \texttt{\%left}: reduce.
+\item Equal precedence with \texttt{\%right}: shift.
+\end{enumerate}
+Normally a rule receives the precedence of its last terminal symbol.
+\texttt{\%prec} can explicitly replace the rule's precedence.
+
+\section{Reading a Bison action}
+\begin{lstlisting}
+expr : expr '+' expr { $$ = ast_binop('+', $1, $3); }
+\end{lstlisting}
+\begin{itemize}
+\item \texttt{\$1} is the value of the first item: the left expression's AST.
+\item \texttt{\$2} corresponds to the plus token; this action does not use its value.
+\item \texttt{\$3} is the right expression's AST.
+\item \texttt{\$\$} is the AST value produced by the entire rule.
+\item \texttt{ast\_binop} creates an operation node with those two children.
+\end{itemize}
+\textbf{The action constructs a tree; it does not add the numbers yet.}
+
+\section{Unary minus and the special UMINUS symbol}
+\begin{lstlisting}
+%right UMINUS
+%right '^'
+
+/* In the expression rules: */
+| '-' expr %prec UMINUS { $$ = ast_uminus($2); }
+\end{lstlisting}
+The same character \texttt{-} appears in subtraction and negation.
+\texttt{\%prec UMINUS} gives the negation production a different precedence
+from binary subtraction. \texttt{UMINUS} is an artificial precedence symbol;
+the user does not type it and the lexer does not return it for input text.
+
+The current code uses \texttt{\%right UMINUS}, which is accepted by the older
+Bison installed on this machine. Its purpose here is to assign the unary rule
+its level. Exponentiation is declared later, so it binds more tightly:
+\[
+-2^2=-(2^2)=-4,\qquad (-2)^2=4.
+\]
+\say{Unary minus uses an explicit rule precedence. It is higher than
+multiplication but lower than power, so minus two squared becomes minus four.}
+
+\chapter{Worked precedence examples}
+\section{Example 1: multiplication before addition}
+Input: \texttt{2 + 3 * 4}.
+\begin{lstlisting}
+        +
+       / \
+      2   *
+         / \
+        3   4
+\end{lstlisting}
+\begin{enumerate}
+\item The parser groups the multiplication on the right.
+\item The evaluator obtains $2$ from the left leaf.
+\item It evaluates the right subtree: $3\times4=12$.
+\item It calculates $2+12=14$.
+\end{enumerate}
+Printed TAC:
+\begin{lstlisting}
+t1 = 3 * 4
+t2 = 2 + t1
+RESULT = t2
+\end{lstlisting}
+Precedence determines the grouping. It does not mean the evaluator always
+visits the highest-precedence token first: this evaluator visits the left
+child before the right child, following the already constructed tree.
+
+\section{Example 2: parentheses change the tree}
+Input: \texttt{(2 + 3) * 4}. The grammar rule is:
+\begin{lstlisting}
+| '(' expr ')' { $$ = $2; }
+\end{lstlisting}
+The enclosed expression becomes the operand. No extra parentheses node is
+needed in this AST. The tree has multiplication at its root and addition as
+its left child. Therefore $(2+3)\times4=20$.
+
+\section{Example 3: left associativity}
+\[
+10-3-2=(10-3)-2=5.
+\]
+Because subtraction is left associative, this is not $10-(3-2)=9$.
+Likewise:
+\[
+20/5\times2=(20/5)\times2=8.
+\]
+Multiplication and division have the same precedence. Multiplication does not
+always happen before division; their shared left associativity decides this case.
+
+\section{Example 4: right-associative exponentiation}
+Input: \texttt{2\char94 3\char94 2}.
+\[
+2^{3^2}=2^9=512.
+\]
+The right power groups first. The alternative $(2^3)^2$ would give $64$.
+\begin{lstlisting}
+t1 = 3 ^ 2
+t2 = 2 ^ t1
+RESULT = t2
+\end{lstlisting}
+
+\section{Example 5: unary minus versus exponentiation}
+\begin{lstlisting}
+Input: -2^2
+Tree:  UMINUS(BINOP('^', NUM(2), NUM(2)))
+
+Printed TAC:
+t1 = 2 ^ 2
+t2 = 0 - t1
+RESULT = t2
+\end{lstlisting}
+The AST represents unary negation explicitly. TAC expresses that negation as
+subtraction from zero. Both give $-4$.
+A negative exponent also works: \texttt{2\char94-3} represents $2^{-3}=0.125$.
+
+\section{Example 6: comparisons have lower precedence}
+\texttt{2 + 3 > 4} groups as $(2+3)>4$, which is true. The evaluator represents
+true as $1$ and false as $0$, both returned as numeric values.
+
+Chained comparisons are left associative in this language. For example,
+\texttt{3 < 2 < 1} groups as \texttt{(3 < 2) < 1}: first $0$, then $0<1$,
+so the result is $1$. It is not a mathematical chained inequality.
+
+\section{A real limitation: implicit multiplication and powers}
+The grammar has special rules for \texttt{NUMBER IDENTIFIER} and
+\texttt{NUMBER '(' expr ')'}. These support \texttt{3x} and \texttt{3(x+1)}.
+However, the current grammar reduces \texttt{3x} into a multiplication node
+before an immediately following power is applied. With \texttt{x = 2}:
+\begin{lstlisting}
+3x^2    -> (3*x)^2 -> 36
+3*x^2   -> 3*(x^2) -> 12
+\end{lstlisting}
+This behavior was checked against the executable. For an unambiguous
+polynomial coefficient, write \texttt{3*x\char94 2}. The declaration
+\texttt{\%prec '*'} on the implicit-multiplication rule does not make this
+special production behave identically to an explicit multiplication in every context.
+
+\chapter{How sqrt works, from text to answer}
+\section{Step 1: recognize the tokens}
+For \texttt{sqrt(25)}, the lexer produces:
+\begin{lstlisting}
+IDENTIFIER("sqrt")  '('  NUMBER(25)  ')'
+\end{lstlisting}
+There is no dedicated \texttt{SQRT} token. The identifier rule recognizes all
+names with the same pattern:
+\begin{lstlisting}
+ID  [a-zA-Z_][a-zA-Z0-9_]*
+
+{ID} { yylval.sval = strdup(yytext); return IDENTIFIER; }
+\end{lstlisting}
+\texttt{yytext} contains the matched text. \texttt{strdup} copies it because
+the parser needs to retain the name after the lexer continues scanning.
+\texttt{yylval.sval} carries the string value to Bison.
+
+\section{Step 2: recognize a function call}
+The actual production in \file{src/parser.y} is:
+\begin{lstlisting}
+| IDENTIFIER '(' arglist ')' {
+    $$ = ast_call($1, $3.items, $3.count);
+    free($1);
+}
+\end{lstlisting}
+Here \texttt{\$1} is the function name. \texttt{\$3.items} is an array of
+argument AST pointers; \texttt{\$3.count} is the number of arguments.
+The parser recognizes the shape of a function call. It does not yet decide
+whether the function is supported.
+
+\section{Step 3: store the function-call node}
+The implementation in \file{src/ast.c} is:
+\begin{lstlisting}[language=C]
+ASTNode *ast_call(const char *name, ASTNode **args, int argc) {
+    ASTNode *n = alloc_node(N_CALL);
+    n->name = strdup(name);
+    n->args = args;
+    n->argc = argc;
+    return n;
+}
+\end{lstlisting}
+For this example the resulting structure is:
+\begin{lstlisting}
+N_CALL
+  name = "sqrt"
+  argc = 1
+  args[0] -> N_NUM, num = 25
+\end{lstlisting}
+The constructor copies the name, so the parser can safely free its original
+identifier string. Later, \texttt{ast\_free} recursively frees the call's
+arguments, argument array, name, and node.
+
+\section{Step 4: dispatch to the function evaluator}
+In \file{src/eval.c}, the evaluator switches on the node kind:
+\begin{lstlisting}[language=C]
+case N_CALL:
+    return call_function(n->name, n->args, n->argc, quiet, ok);
+\end{lstlisting}
+The name and argument list are passed to \texttt{call\_function}.
+This helper recognizes supported names using \texttt{strcmp}.
+\textbf{In C, \texttt{strcmp(a,b) == 0} means the strings are equal.}
+
+\section{Step 5: check the argument count}
+After recognizing one of the supported one-argument functions, the helper does:
+\begin{lstlisting}[language=C]
+if (argc != 1) {
+    semantic_error("'%s' expects 1 argument, got %d", name, argc);
+    *ok = 0;
+    return 0;
+}
+double a = eval(args[0], quiet, ok);
+if (!*ok) return 0;
+\end{lstlisting}
+\texttt{sqrt(25)} has one argument and passes. \texttt{sqrt(25,9)} has two
+arguments, so it produces a semantic error. Argument count is called
+\textbf{arity}. The function expects an expression as its argument, so
+\texttt{sqrt(9+16)} also works: the argument subtree is evaluated to $25$ first.
+
+\section{Step 6: check the domain and call the C library}
+The following is the same square-root branch with its long error line
+expanded for readability:
+\begin{lstlisting}[language=C]
+if (strcmp(name, "sqrt") == 0) {
+    if (a < 0) {
+        if (!quiet)
+            math_error("sqrt of negative number %g", a);
+        *ok = 0;
+        return 0;
+    }
+    return sqrt(a);
+}
+\end{lstlisting}
+\begin{enumerate}
+\item Confirm that the name is \texttt{sqrt}.
+\item Reject a negative real input.
+\item Call C's \texttt{sqrt} function from \texttt{<math.h>}.
+\item Return the result as a \texttt{double}.
+\end{enumerate}
+For $a=25$, the library returns $5$. The calculator prints the result using
+\texttt{format\_number} in \file{src/util.c}, so a whole-number result usually
+appears as \texttt{5}, rather than \texttt{5.000000}.
+
+\say{I implemented the language-level function handling: recognizing the
+call, storing the arguments, checking the count and domain, and dispatching
+it. The numerical square-root calculation is done by C's math library.}
+
+\section{What the project does not implement inside sqrt}
+MathScript does not contain a Newton iteration or a hand-written square-root
+algorithm. If asked how the numerical library works internally, distinguish
+that separate topic from the code you wrote. Do not claim that a particular
+library algorithm appears in this repository.
+
+Also, $\sqrt{25}=5$ is the principal nonnegative square root. Solving
+$y^2=25$ is a different task and produces $y=-5$ and $y=5$.
+
+\chapter{Every supported function and related rule}
+\section{Function reference}
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}llXX@{}}
+\toprule
+Function & Arguments & Meaning / checks & Example result\\
+\midrule
+\texttt{sqrt(a)} & 1 & Nonnegative real square root; rejects $a<0$ & \texttt{sqrt(25)}: $5$\\
+\texttt{abs(a)} & 1 & Absolute value; calls C's \texttt{fabs} & \texttt{abs(-5)}: $5$\\
+\texttt{sin(a)} & 1 & Sine; input in radians & \texttt{sin(pi/2)}: about $1$\\
+\texttt{cos(a)} & 1 & Cosine; input in radians & \texttt{cos(0)}: $1$\\
+\texttt{tan(a)} & 1 & Tangent; input in radians & \texttt{tan(0)}: $0$\\
+\texttt{log(a)} & 1 & Natural logarithm; rejects $a\leq0$ & \texttt{log(e)}: about $1$\\
+\texttt{pow(a,b)} & 2 & Raise $a$ to power $b$ & \texttt{pow(2,3)}: $8$\\
+\bottomrule
+\end{tabularx}
+\end{center}
+These functions are built in. The language does not currently allow users
+to define a new function body such as \texttt{f(y)=y*y}.
+
+\section{abs, sin, cos, tan, and log}
+The short dispatch branches are:
+\begin{lstlisting}[language=C]
+if (strcmp(name, "abs") == 0) return fabs(a);
+if (strcmp(name, "sin") == 0) return sin(a);
+if (strcmp(name, "cos") == 0) return cos(a);
+if (strcmp(name, "tan") == 0) return tan(a);
+\end{lstlisting}
+\texttt{fabs} handles floating-point absolute values. C's integer
+\texttt{abs} would not be the correct choice for general \texttt{double} inputs.
+For example, \texttt{abs(-2.5)} should produce $2.5$.
+
+Trigonometric input is in radians, not degrees. Since $180^\circ=\pi$ radians,
+$90^\circ=\pi/2$. That is why \texttt{sin(pi/2)} is a useful demonstration.
+The code does not explicitly detect tangent's singularities; floating-point
+approximations near $\pi/2$ may give a very large number.
+
+For logarithm, the helper checks \texttt{a <= 0} before calling \texttt{log(a)}.
+The base is $e$, so $\log(e)=1$ here. There is no separate built-in
+\texttt{log10} in this implementation.
+
+\section{pow: evaluate two arguments}
+\begin{lstlisting}[language=C]
+if (strcmp(name, "pow") == 0) {
+    if (argc != 2) {
+        semantic_error("'pow' expects 2 arguments, got %d", argc);
+        *ok = 0; return 0;
+    }
+    double a = eval(args[0], quiet, ok);
+    if (!*ok) return 0;
+    double b = eval(args[1], quiet, ok);
+    if (!*ok) return 0;
+    return pow(a, b);
+}
+\end{lstlisting}
+For \texttt{pow(2+1,2)}, the first argument becomes $3$, the second becomes
+$2$, and the result is $3^2=9$. For \texttt{pow(2,3\char94 2)}, the second
+argument becomes $9$, so the result is $512$.
+
+The power operator uses the same C library function:
+\begin{lstlisting}[language=C]
+case '^': return pow(a, b);
+\end{lstlisting}
+In MathScript, \texttt{\char94} means exponentiation. In C source, the
+\texttt{\char94} operator means bitwise XOR; therefore the evaluator and C
+generator translate MathScript power to a call to \texttt{pow}.
+
+\textbf{Current limitation:} unlike \texttt{sqrt} and \texttt{log}, the power
+branches do not explicitly check every domain or overflow failure. Some
+inputs can produce NaN or infinity. Do not say that all math-library errors
+are converted into a MathScript error.
+
+\section{How argument lists work}
+\begin{lstlisting}
+arglist : /* empty */
+        | expr
+        | arglist ',' expr
+        ;
+\end{lstlisting}
+This abbreviated rule shows the shapes. The actual actions allocate an
+array for the first argument and grow it with \texttt{realloc} when another
+argument is appended. The list contains AST pointers, not evaluated values.
+That is why nested expressions remain available for later evaluation.
+
+An empty list means \texttt{sqrt()} can be parsed, but it fails the one-argument
+check during evaluation. The current list grammar also permits an initial
+comma, as in \texttt{sqrt(,25)}, because the list before that comma can be
+empty. That is a grammar limitation, not a feature to use in the demonstration.
+
+\section{Numbers, variables, and constants}
+\begin{lstlisting}[language=C]
+case N_NUM:
+    return n->num;
+
+case N_VAR: {
+    double v;
+    if (!symtab_lookup(n->name, &v)) {
+        semantic_error("Undefined variable '%s'", n->name);
+        *ok = 0;
+        return 0;
+    }
+    return v;
+}
+\end{lstlisting}
+A number leaf already stores its value. A variable leaf stores a name;
+the evaluator looks up that name in the symbol table.
+\begin{lstlisting}
+/calc
+x = 25
+sqrt(x)
+\end{lstlisting}
+The assignment stores $25$. The later variable lookup returns $25$, and the
+square-root call returns $5$. The table initially registers \texttt{pi} and
+\texttt{e}. Although they are marked as constants, the current calculator
+assignment path does not enforce their protection; avoid claiming that
+reassignment is already blocked.
+
+The number lexer accepts digits with an optional decimal part, such as
+\texttt{25} and \texttt{2.5}. A leading minus is parsed separately as unary
+minus. Scientific notation and leading-dot decimals are not supported by
+this numeric token pattern.
+
+\chapter{Recursion, errors, and code generation}
+\section{One complete nested example}
+Consider \texttt{sqrt(25) + abs(-5)}. Its structure is:
+\begin{lstlisting}
+BINOP '+'
+  CALL sqrt/1
+    NUM 25
+  CALL abs/1
+    UMINUS
+      NUM 5
+\end{lstlisting}
+\begin{enumerate}
+\item \texttt{eval} sees addition and evaluates its left child.
+\item That child calls \texttt{sqrt}; its argument evaluates to $25$; it returns $5$.
+\item \texttt{eval} then evaluates the addition's right child.
+\item That child calls \texttt{abs}; its argument negates $5$ to obtain $-5$.
+\item \texttt{fabs(-5)} returns $5$.
+\item The addition returns $5+5=10$.
+\end{enumerate}
+The same \texttt{eval} function calls itself on smaller subtrees. This is
+recursion. Literal numbers are the simplest stopping cases.
+
+\section{Why ok is a pointer}
+The caller starts with \texttt{int ok = 1} and passes \texttt{\&ok}.
+The evaluator can write \texttt{*ok = 0} to tell all enclosing calls that
+something failed. The numeric return value alone is insufficient: zero can
+be a valid result or a placeholder returned after an error.
+
+For \texttt{sqrt(-1) + 10}, the left subtree marks failure. The addition
+checks \texttt{if (!*ok) return 0;} and stops; it does not print a valid answer
+of $10$. \file{src/calc.c} checks the success flag before printing TAC and a result.
+
+\section{Why quiet exists}
+\texttt{quiet=0} allows the evaluator to print mathematical errors.
+\texttt{quiet=1} suppresses those messages while still marking the sample
+invalid through \texttt{ok}. Graphing uses quiet evaluation because a function
+may be undefined at many sampled coordinates. Semantic errors such as an
+unknown function still print: quiet does not suppress them.
+
+\section{The four error classes}
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}llX@{}}
+\toprule
+Class & Example & What is wrong?\\
+\midrule
+Lexical & \texttt{10 @ 5} & The lexer cannot recognize \texttt{@}.\\
+Syntax & \texttt{10 + * 5} & Recognized tokens do not form a valid expression.\\
+Semantic & \texttt{foo(5)} & Valid call syntax, unsupported function name.\\
+Semantic & \texttt{sqrt(1,2)} & Supported function, wrong argument count.\\
+Mathematical & \texttt{sqrt(-1)} & Invalid real domain for square root.\\
+Mathematical & \texttt{10/0} & Division by zero.\\
+\bottomrule
+\end{tabularx}
+\end{center}
+For a missing closing parenthesis, such as \texttt{sqrt(25}, the parser
+reports a syntax error before the evaluator runs.
+
+\section{Assignment is different from equality}
+\texttt{=} is a statement-level separator in the grammar. In calculator
+mode, \texttt{x = 5} is assignment and the left side must be a variable.
+In equation mode, \texttt{x\char94 2 = 4} is an equation to solve.
+\texttt{==} is an expression comparison that returns $1$ or $0$.
+The evaluator rejects an assignment-style \texttt{=} node inside an expression.
+
+\section{Square root versus imaginary equation roots}
+The ordinary evaluator returns real \texttt{double} values, so
+\texttt{sqrt(-1)} is a mathematical error in calculator mode. Separately,
+\file{src/poly.c} represents real and imaginary parts for polynomial roots.
+Thus \texttt{y\char94 2 + 1 = 0} in equation mode can print $0-i$ and $0+i$.
+The polynomial solver's complex-root support does not make every calculator
+function a complex-valued function.
+
+\section{What gen demonstrates}
+\begin{lstlisting}
+/calc
+gen sqrt(25) + abs(-5)
+\end{lstlisting}
+The calculator first evaluates the AST normally. If no error was reported,
+\texttt{codegen\_run} writes \file{output/generated.c}, invokes the system C
+compiler, then executes the generated program. A representative generated
+body is:
+\begin{lstlisting}[language=C]
+double t1 = sqrt(25);
+double t2 = -(5);
+double t3 = fabs(t2);
+double t4 = t1 + t3;
+double result = t4;
+printf("%g\n", result);
+\end{lstlisting}
+The generated program includes \texttt{<math.h>} and the build command uses
+\texttt{-lm} to link the math library where required. A header provides
+function declarations; linking supplies the implementation. Note again:
+this generator walks the AST directly, rather than parsing the printed TAC.
+
+\chapter{A demonstration you can rehearse}
+\section{A five-minute sequence}
+Run these commands from the MathScript project folder:
+\begin{lstlisting}
+./build.sh
+./build/mathscript
+\end{lstlisting}
+Inside the program, use:
+\begin{lstlisting}
+/precedence
+/calc
+2 + 3 * 4
+(2 + 3) * 4
+-2^2
+2^3^2
+sqrt(9 + 16)
+sqrt(25) + abs(-5)
+pow(2,3)
+sin(pi/2)
+log(e)
+sqrt(-1)
+sqrt(1,2)
+foo(5)
+gen sqrt(25) + abs(-5)
+exit
+/exit
+\end{lstlisting}
+Keep TAC enabled for the precedence examples. Point at the temporary that
+computes multiplication or the inner exponent. Then open \file{src/parser.y}
+and show the five declarations. For functions, open \file{src/eval.c} and show
+the argument-count check, recursive argument evaluation, and square-root branch.
+
+\section{Expected answers for the successful calculations}
+\begin{center}
+\begin{tabular}{@{}lr@{}}
+\toprule
+Expression & Answer\\
+\midrule
+\texttt{2 + 3 * 4} & 14\\
+\texttt{(2 + 3) * 4} & 20\\
+\texttt{-2\char94 2} & $-4$\\
+\texttt{2\char94 3\char94 2} & 512\\
+\texttt{sqrt(9 + 16)} & 5\\
+\texttt{sqrt(25) + abs(-5)} & 10\\
+\texttt{pow(2,3)} & 8\\
+\texttt{sin(pi/2)} & approximately 1\\
+\texttt{log(e)} & approximately 1\\
+\bottomrule
+\end{tabular}
+\end{center}
+The three invalid calls demonstrate a mathematical error, an arity semantic
+error, and an unknown-function semantic error, respectively.
+
+\section{A quick practice exercise}
+Before running them, predict:
+\begin{enumerate}
+\item \texttt{10 - 3 - 2}
+\item \texttt{20 / 5 * 2}
+\item \texttt{(-2)\char94 2}
+\item \texttt{2\char94-3}
+\item \texttt{sqrt(pow(3,2) + pow(4,2))}
+\item \texttt{pow(2,3\char94 2)}
+\item \texttt{abs(-2.5)}
+\end{enumerate}
+\textbf{Answers:} $5$, $8$, $4$, $0.125$, $5$, $512$, and $2.5$.
+For each answer, explain the tree grouping before describing the arithmetic.
+
+\chapter{Short viva questions and answers}
+\qa{1. Where is operator precedence implemented?}
+In \file{src/parser.y}, using Bison's \texttt{\%left}, \texttt{\%right},
+and \texttt{\%prec} declarations. They influence the generated parser tables.
+\qa{2. Does the lexer decide multiplication happens first?}
+No. It returns tokens. The parser resolves the expression structure using
+the grammar and precedence declarations.
+\qa{3. What is the difference between precedence and associativity?}
+Precedence chooses how different precedence levels group. Associativity
+chooses grouping at the same level, such as repeated subtraction or power.
+\qa{4. Why is exponentiation right associative?}
+The grammar declares \texttt{\%right '\char94'}. Therefore
+\texttt{2\char94 3\char94 2} groups as $2^{(3^2)}$.
+\qa{5. Why does minus two squared give minus four?}
+Power has higher precedence than the unary-minus production. The AST negates
+the result of $2^2$. Parenthesizing the negative number gives a different tree.
+\qa{6. Does Bison calculate the expression?}
+Our Bison actions create AST nodes. Our C evaluator later calculates their
+values. Bison could run other semantic actions, but these actions build trees.
+\qa{7. Is sqrt a keyword in the lexer?}
+No. It is an identifier followed by parentheses and an argument list.
+The evaluator recognizes the supported function name.
+\qa{8. How can sqrt accept an expression instead of a number?}
+Each argument is an expression AST. The function helper recursively evaluates
+that AST before calling the numerical library function.
+\qa{9. What does strcmp returning zero mean?}
+The two strings are equal. It is how the dispatcher matches a stored function name.
+\qa{10. Why check argc?}
+The parser accepts a general argument list, but each built-in function has a
+required arity. Square root expects one argument; power expects two.
+\qa{11. Why not just return zero on an error?}
+Zero is also a valid numerical result. The shared success flag distinguishes
+failure from a successful zero.
+\qa{12. Did you implement the numerical square-root algorithm?}
+No. I implemented language parsing, AST construction, checks, and dispatch.
+C's math library computes the numerical square root.
+\qa{13. Why use fabs for abs?}
+MathScript uses floating-point values. \texttt{fabs} accepts and returns
+floating-point values, unlike the integer absolute-value function.
+\qa{14. Are sin and cos in degrees?}
+No, radians. Use \texttt{pi/2} for ninety degrees.
+\qa{15. What base does log use?}
+The natural base $e$, because the implementation calls C's \texttt{log}.
+\qa{16. Is pow(y,2) the same operation as y squared?}
+Yes. The parser creates different node shapes (call versus binary power),
+but both evaluator paths call the C power function after evaluating operands.
+\qa{17. Why is foo(5) a semantic error instead of a syntax error?}
+Its shape is a valid function call. Its name is not supported by the evaluator.
+\qa{18. How do you prove precedence in the running program?}
+Show both the numeric answer and the TAC operation order, then identify the
+matching declarations in \file{src/parser.y}.
+\qa{19. What happens to the AST afterwards?}
+The driver frees it after the mode backend finishes. \texttt{ast\_free}
+recursively releases children and owned strings and arrays.
+\qa{20. What would you do to add another built-in function?}
+For a one-argument function such as a future \texttt{exp}, add its name to the
+recognized group, add a dispatch branch and any required domain checks,
+and add tests. The general function-call grammar already accepts its syntax.
+Also check the C-generation mapping and behavior in graph/equation contexts.
+\qa{21. What is one honest limitation to mention?}
+Implicit multiplication followed by power has a grouping limitation; write
+explicit multiplication for coefficients. Power errors are also not checked
+as completely as square-root and logarithm domain errors.
+
+\section*{The two answers to memorize}
+\say{Operator precedence is implemented in the Bison parser. Later
+declarations bind more tightly. Associativity decides grouping at the same
+level. The parser constructs the correct AST, and the evaluator follows that tree.}
+\say{A function call is parsed as an identifier with argument expressions.
+The evaluator checks the function name and argument count, evaluates the
+arguments, checks the required domain, and calls the matching C math function.
+For square root, a negative argument is rejected before calling sqrt.}
+
+\appendix
+\chapter{The actual evaluator source}
+This is a self-contained snapshot of \file{src/eval.c}. It is included here
+so the guide can be read without access to the project directory. The shorter
+listings in the chapters explain individual parts of this implementation.
+
+\begin{lstlisting}[language=C]
+#include <math.h>
+#include <string.h>
+#include "eval.h"
+#include "symtab.h"
+#include "errors.h"
+
+static double call_function(const char *name, ASTNode **args, int argc,
+                             int quiet, int *ok) {
+    /* one argument functions */
+    if (strcmp(name, "sqrt") == 0 || strcmp(name, "abs") == 0 ||
+        strcmp(name, "sin") == 0  || strcmp(name, "cos") == 0  ||
+        strcmp(name, "tan") == 0  || strcmp(name, "log") == 0) {
+        if (argc != 1) {
+            semantic_error("'%s' expects 1 argument, got %d", name, argc);
+            *ok = 0; return 0;
+        }
+        double a = eval(args[0], quiet, ok);
+        if (!*ok) return 0;
+
+        if (strcmp(name, "sqrt") == 0) {
+            if (a < 0) { if (!quiet) math_error("sqrt of negative number %g", a); *ok = 0; return 0; }
+            return sqrt(a);
+        }
+        if (strcmp(name, "abs") == 0) return fabs(a);
+        if (strcmp(name, "sin") == 0) return sin(a);
+        if (strcmp(name, "cos") == 0) return cos(a);
+        if (strcmp(name, "tan") == 0) return tan(a);
+        /* log */
+        if (a <= 0) { if (!quiet) math_error("log of non-positive number %g", a); *ok = 0; return 0; }
+        return log(a);
+    }
+
+    /* two argument functions */
+    if (strcmp(name, "pow") == 0) {
+        if (argc != 2) {
+            semantic_error("'pow' expects 2 arguments, got %d", argc);
+            *ok = 0; return 0;
+        }
+        double a = eval(args[0], quiet, ok);
+        if (!*ok) return 0;
+        double b = eval(args[1], quiet, ok);
+        if (!*ok) return 0;
+        return pow(a, b);
+    }
+
+    semantic_error("Unknown function '%s'", name);
+    *ok = 0;
+    return 0;
+}
+
+double eval(ASTNode *n, int quiet, int *ok) {
+    if (!*ok || !n) return 0;
+
+    switch (n->kind) {
+        case N_NUM:
+            return n->num;
+
+        case N_VAR: {
+            double v;
+            if (!symtab_lookup(n->name, &v)) {
+                semantic_error("Undefined variable '%s'", n->name);
+                *ok = 0;
+                return 0;
+            }
+            return v;
+        }
+
+        case N_UMINUS:
+            return -eval(n->left, quiet, ok);
+
+        case N_CALL:
+            return call_function(n->name, n->args, n->argc, quiet, ok);
+
+        case N_BINOP: {
+            double a = eval(n->left, quiet, ok);
+            if (!*ok) return 0;
+            double b = eval(n->right, quiet, ok);
+            if (!*ok) return 0;
+
+            switch (n->op) {
+                case '+': return a + b;
+                case '-': return a - b;
+                case '*': return a * b;
+                case '/':
+                    if (b == 0) { if (!quiet) math_error("Division by zero"); *ok = 0; return 0; }
+                    return a / b;
+                case '^': return pow(a, b);
+                case '<':  return a <  b ? 1 : 0;
+                case '>':  return a >  b ? 1 : 0;
+                case OP_GE: return a >= b ? 1 : 0;
+                case OP_LE: return a <= b ? 1 : 0;
+                case OP_EQ: return a == b ? 1 : 0;
+                case OP_NE: return a != b ? 1 : 0;
+                case '=':
+                    /* '=' is only meaningful to the mode-specific
+                       backends (assignment / equation), never here. */
+                    semantic_error("'=' cannot appear inside an expression");
+                    *ok = 0;
+                    return 0;
+            }
+        }
+    }
+    *ok = 0;
+    return 0;
+}
+\end{lstlisting}
+
+\chapter{Source-file revision map}
+
+Use this map to find the code during your presentation. Search for the
+function or declaration named here rather than relying on line numbers,
+which can change after edits.
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+File & Search for\\
+\midrule
+\file{src/lexer.l} & \texttt{NUMBER}, \texttt{ID}, \texttt{yylval}\\
+\file{src/parser.y} & \texttt{\%left}, \texttt{UMINUS}, \texttt{arglist}\\
+\file{src/ast.h} & \texttt{NodeKind}, \texttt{ASTNode}\\
+\file{src/ast.c} & \texttt{ast\_call}, \texttt{ast\_binop}, \texttt{ast\_free}\\
+\file{src/eval.c} & \texttt{call\_function}, \texttt{eval}\\
+\file{src/calc.c} & \texttt{calc\_run}\\
+\file{src/errors.c} & \texttt{semantic\_error}, \texttt{math\_error}\\
+\file{src/symtab.c} & \texttt{symtab\_init}, \texttt{symtab\_lookup}\\
+\file{src/ir.c} & \texttt{tac\_build}\\
+\file{src/codegen.c} & \texttt{codegen\_expr}, \texttt{codegen\_run}\\
+\file{src/main.c} & \texttt{parse\_line}, \texttt{process\_line}\\
+\file{tests/run_tests.sh} & Precedence, function, and error test cases\\
+\bottomrule
+\end{tabularx}
+\end{center}
+\section*{Compiling this guide}
+This file contains its own code listings and does not require the MathScript
+source files when compiling. With a LaTeX distribution installed, compile
+twice to populate the table of contents:
+\begin{lstlisting}
+pdflatex QNA.tex
+pdflatex QNA.tex
+\end{lstlisting}
+You can also upload the file to a LaTeX editor that provides pdfLaTeX.
+\end{document}

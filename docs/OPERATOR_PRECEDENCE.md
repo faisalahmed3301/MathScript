@@ -40,7 +40,7 @@ conflict directly, with these two lines near the top of
 %left '<' '>' GE LE EQ NE
 %left '+' '-'
 %left '*' '/'
-%precedence UMINUS
+%right UMINUS
 %right '^'
 ```
 
@@ -54,9 +54,9 @@ Two independent pieces of information are declared per line:
 - **Associativity** -- `%left` means "reduce" when the same operator
   repeats (so `a - b - c` groups as `(a - b) - c`), `%right` means
   "shift" instead (so `a ^ b ^ c` groups as `a ^ (b ^ c)`).
-  `%precedence` gives unary minus a level with no associativity of
-  its own, since it never repeats (`- - a` is two separate unary
-  minus nodes, not decided by this rule at all).
+  `%right UMINUS` assigns unary minus its precedence level using syntax
+  supported by older Bison versions too. Nested unary minus expressions
+  (`- - a`) still form two separate unary nodes.
 
 This is exactly the same information the doc's original diagrams
 describe as "MathScript follows normal mathematical precedence" --
@@ -154,7 +154,7 @@ RESULT = t2
 3. Open `src/parser.y` and show the five `%left` / `%right` /
    `%precedence` lines are the entire mechanism -- nothing else in
    the grammar encodes precedence.
-4. Optional: comment out the `%precedence`/`%right` lines, rebuild
+4. Optional: comment out the `%right UMINUS`/`%right '^'` lines, rebuild
    with `bison -d -o build/parser.tab.c src/parser.y`, and show
    Bison now reports shift/reduce conflicts on stderr -- proof that
    those lines are doing real work, not decoration.

@@ -8,6 +8,8 @@
 #include "errors.h"
 #include "util.h"
 #include "rootfind.h"
+#include "poly.h"
+#include <math.h>
 
 /* Loudly evaluates lhs(var_name)-rhs(var_name) once at var_name=0,
  * so an undefined name or wrong-arity call is reported clearly
@@ -62,6 +64,28 @@ void solver_run(ASTNode *stmt, int show_tac) {
     tac_finish_eqn(&tac, operand);
     free(diff);
     if (show_tac) { printf("IR (TAC):\n"); tac_print(&tac); }
+
+    Polynomial left, right;
+    if (poly_extract(lhs, var_name, &left) && poly_extract(rhs, var_name, &right)) {
+        for (int i = 0; i < 4; i++) left.c[i] -= right.c[i];
+        PolyRoot solutions[3];
+        int count = poly_solve(&left, solutions);
+        if (had_x) symtab_set(var_name, saved_x); else symtab_unset(var_name);
+        if (!count) {
+            printf("%s\n", left.c[0] == 0 ? "Infinitely many solutions." : "No solution.");
+            return;
+        }
+        printf("%s\n", count == 1 ? "Root:" : "Roots (including repeated roots):");
+        for (int i = 0; i < count; i++) {
+            if (solutions[i].imag == 0)
+                printf("%s = %s\n", var_name, format_number((double)solutions[i].real));
+            else
+                printf("%s = %s %c %si\n", var_name,
+                       format_number((double)solutions[i].real), solutions[i].imag < 0 ? '-' : '+',
+                       format_number((double)fabsl(solutions[i].imag)));
+        }
+        return;
+    }
 
     double roots[ROOTFIND_MAX];
     int nroots = rootfind_solve(lhs, rhs, var_name, -25.0, 25.0, 5000, roots, &ok);

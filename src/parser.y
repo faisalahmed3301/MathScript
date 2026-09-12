@@ -49,7 +49,7 @@ void yyerror(const char *msg) {
 }
 %}
 
-%define parse.error verbose
+%error-verbose
 
 %union {
     double   dval;
@@ -71,7 +71,7 @@ void yyerror(const char *msg) {
 %left '<' '>' GE LE EQ NE
 %left '+' '-'
 %left '*' '/'
-%precedence UMINUS
+%right UMINUS
 %right '^'
 
 %%

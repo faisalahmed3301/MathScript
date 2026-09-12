@@ -8,7 +8,7 @@ CFLAGS  = -I build -I src -Wall
 LIBS    = -lm
 
 SRCS = src/main.c src/ast.c src/symtab.c src/errors.c src/eval.c \
-       src/ir.c src/util.c src/calc.c src/graph.c src/solver.c src/rootfind.c src/codegen.c
+       src/ir.c src/util.c src/calc.c src/graph.c src/solver.c src/poly.c src/rootfind.c src/codegen.c
 
 .PHONY: all clean run
 

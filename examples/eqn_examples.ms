@@ -15,5 +15,11 @@ x^3 - x = 0
 # any single variable name works, not just x
 y^2 = 4
 
+# Real and complex polynomial roots, including pow syntax
+3*z + 6 = 0
+y^2 - 2*y + 5 = 0
+pow(z,3) - 1 = 0
+(z-2)^3 = 0
+
 exit
 /exit

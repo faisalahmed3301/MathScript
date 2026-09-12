@@ -116,18 +116,52 @@ Three modes, one grammar (see `docs/GRAMMAR.md`):
   line) or in two variables (`x^2 + y^2 = 25`, plotted as an implicit
   curve like a line or circle)
 - **`/eqn`** -- solve `<expr> = <expr>` for whichever single variable it
-  uses (defaults to `x` if the equation is a constant); prints all real roots
+  uses (defaults to `x` if the equation is a constant); prints all real and complex roots for degree 1, 2, and 3 polynomials
+  (other expressions use a numerical real-root search over `[-25, 25]`)
 
-`/graph`'s vertical range defaults to a fixed `[-50, 50]` (expanding only
-if the data needs more) instead of auto-fitting to each function's own
-min/max -- otherwise a shallow line and a steep one would each get
-stretched to fill the frame and look equally steep. The curve itself is
-drawn with `.`; axes are drawn with `|`, `-`, and `+` at the origin.
+In `/graph`, a bare expression in `y` is shorthand for `x = <expression>`:
+`y^2` plots both branches of `x = y^2`, and `y^3` plots `x = y^3`,
+including negative coordinates. You can equivalently write `pow(y,2)` or
+`pow(y,3)`. Both bare expressions and equations such as `x = pow(y,2)`
+or `pow(y,3) = x` are supported. Explicit equations such as `y^2 = x`
+and `y^3 = x` also work. Implicit curves print sample `(x, y)` points
+on a labeled **200-column by 75-row** canvas. Horizontal coordinates span
+`[-10, 10]`. The vertical span is calculated from the canvas dimensions and
+terminal cell proportions, approximately `[-7.437, 7.437]` in this frame.
+With typical characters twice as tall as wide, one mathematical unit takes
+the same physical distance on both axes: circles look round and sideways
+parabolas no longer look flattened. Actual proportions depend on your font.
+All plots share this scale so their shapes and slopes remain comparable.
+
+Curves use `.` with dense sampling and numbered axis labels. Only the main
+axes (`|`, `-`, and `+`) appear behind the curve; there is no outer border
+or background grid. Values outside the viewport are clipped with a notice;
+undefined or non-finite samples are skipped. Samples are drawn independently
+so no straight segment is invented across a discontinuity. Use `/tac off`
+for a cleaner graph session. Allow about 216 terminal columns for the canvas
+and labels; narrower windows may wrap the output.
 
 Inside `/calc`, prefix a line with `gen ` (e.g. `gen (5+3)*2`) to
 additionally generate an equivalent C program, compile it with the
 system C compiler, run it, and print its output -- a live
 demonstration of executable code generation from the same IR.
+
+In `/eqn`, variable names such as `x`, `y`, and `z` all work. Use either
+`^` or `pow` and put expressions on either side of `=`:
+
+```text
+/eqn
+y^2 - 2*y + 5 = 0
+# y = 1 - 2i, y = 1 + 2i
+pow(z,3) - 1 = 0
+# z = -0.5 - 0.866025i, z = -0.5 + 0.866025i, z = 1
+```
+
+Polynomial coefficients are collected from arithmetic expressions (including
+products, parentheses, and division by constants). Degree 1–3 polynomials
+include repeated roots and have no search-window restriction. Roots are
+computed numerically and printed to six significant digits. An equation must
+contain only one distinct variable; `pi` and `e` remain constants.
 
 ## 4. Project structure
 
@@ -144,6 +178,7 @@ MathScript/
 │   ├── calc.h / .c        /calc backend
 │   ├── graph.h / .c       /graph backend (ASCII plot: curves, 1- and 2-variable equations)
 │   ├── solver.h / .c      /eqn backend
+│   ├── poly.h / .c      Polynomial coefficients and degree 1–3 real/complex roots
 │   ├── rootfind.h / .c    shared root-finder (closed-form + bisection fallback)
 │   ├── codegen.h / .c     TAC -> C source -> compile -> run
 │   ├── util.h / .c        Shared number formatting
@@ -161,6 +196,8 @@ MathScript/
 
 ```bash
 ./build.sh && ./tests/run_tests.sh          # macOS/Linux
+python3 tests/test_polynomial_roots.py       # optional full root-set checks (Python 3)
+python3 tests/test_graph_rendering.py        # geometry, clipping, and domain-gap checks
 .\build.ps1 ; .\tests\run_tests.ps1         # Windows
 ```
 

@@ -81,11 +81,14 @@ and `e`) to decide which of three things to do:
 | exactly two free variables | `x^2 + y^2 = 25` | an implicit relation: for each sampled value of one variable, `rootfind_solve()` finds every value of the other that satisfies the equation, so a circle's two branches both get plotted |
 | more than two free variables | `a + b + c = 1` | rejected with a Semantic Error -- nothing to hold fixed |
 
-The vertical range is intentionally **not** auto-fit tightly to each
-function's own data. It defaults to a fixed `[-50, 50]` and only grows
-if the data does not fit -- otherwise a gently-sloped line (`y = x`)
-and a steep one (`y = 5*x`) would each get independently stretched to
-fill the same frame and look identically steep.
+All 2D plots use a labeled 200x75 dot canvas with a fixed horizontal
+range `[-10, 10]`. The vertical span is the horizontal span multiplied by
+`2 * (height - 1) / (width - 1)`, compensating for terminal characters
+being roughly twice as tall as wide. For this frame the vertical range is
+approximately `[-7.437, 7.437]`. Only the primary axes are drawn; the outer border and background grid
+are omitted. Off-screen points are clipped; undefined
+samples are skipped. Dense sampling improves continuity without connecting
+across domain gaps.
 
 ## Tokens produced by the lexer (`src/lexer.l`)
 
@@ -119,3 +122,19 @@ Any other character is rejected by the lexer's catch-all rule with a
 | Target code generation| `src/codegen.c` |
 | Error reporting        | `src/errors.h/.c` |
 | REPL / script driver  | `src/main.c`    |
+
+### Bare graph expressions
+
+The existing `statement -> expr` rule also accepts bare graph expressions.
+A single-variable expression in `y` (such as `y^2`, `y^3`, `pow(y,2)`,
+or `pow(y,3)`) is plotted
+as `x = expr`; an expression in another variable is plotted as `y = expr`.
+Implicit curves include sample coordinate pairs and use the same fixed
+viewport as explicit function plots.
+
+### Polynomial equation solving
+
+`solver.c` uses `poly.c` to collect degree 0–3 coefficients from the AST
+for the selected variable (including `y` or `z`). Degree 1–3 equations
+return real and complex roots with multiplicity. Powers may use `^` or
+`pow`. Other expressions retain the real-root numerical fallback.

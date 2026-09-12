@@ -20,5 +20,17 @@ y = 5x
 3*x + 2*y = 6
 x^2 + y^2 = 25
 
+# Functions of y: bare expressions mean x = f(y)
+y^2
+y^3
+y^2 = x
+y^3 = x
+
+# Equivalent function-call notation
+pow(y,2)
+pow(y,3)
+pow(y,2) = x
+x = pow(y,3)
+
 exit
 /exit

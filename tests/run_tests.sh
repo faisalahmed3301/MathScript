@@ -50,6 +50,53 @@ check "graph: implicit mult y=5x" "/graph\ny=5x\nexit\n/exit\n"                 
 check "graph: bare eqn 3x=1"      "/graph\n3x=1\nexit\n/exit\n"                  "x = 0.333333"
 check "graph: two-variable line"  "/graph\n3*x + 2*y = 6\nexit\n/exit\n"          "implicit relation"
 
+# Sideways curves: verify computed coordinates, including both branches.
+check "graph: bare y squared lower branch" "/graph\ny^2\nexit\n/exit\n" "(4, -2)"
+check "graph: bare y squared upper branch" "/graph\ny^2\nexit\n/exit\n" "(4, 2)"
+check "graph: bare y cubed negative" "/graph\ny^3\nexit\n/exit\n" "(-8, -2)"
+check "graph: bare y cubed positive" "/graph\ny^3\nexit\n/exit\n" "(8, 2)"
+check "graph: y squared equation" "/graph\ny^2 = x\nexit\n/exit\n" "(4, -2)"
+check "graph: y cubed equation" "/graph\ny^3 = x\nexit\n/exit\n" "(-8, -2)"
+check "graph: reversed cubic equation" "/graph\nx = y^3\nexit\n/exit\n" "(8, 2)"
+check "graph: y on both sides lower branch" "/graph\ny = y^3 + x\nexit\n/exit\n" "(0, -1)"
+check "graph: y on both sides upper branch" "/graph\ny = y^3 + x\nexit\n/exit\n" "(0, 1)"
+
+# Function-call power syntax must retain both branches and negative roots.
+check "graph: pow square lower branch" "/graph\npow(y,2)\nexit\n/exit\n" "(4, -2)"
+check "graph: pow square upper branch" "/graph\npow(y,2)\nexit\n/exit\n" "(4, 2)"
+check "graph: pow cube negative" "/graph\npow(y,3)\nexit\n/exit\n" "(-8, -2)"
+check "graph: pow cube positive" "/graph\npow(y,3)\nexit\n/exit\n" "(8, 2)"
+check "graph: pow square equation" "/graph\npow(y,2) = x\nexit\n/exit\n" "(4, -2)"
+check "graph: pow cube equation" "/graph\npow(y,3) = x\nexit\n/exit\n" "(-8, -2)"
+check "graph: pow reversed square" "/graph\nx = pow(y,2)\nexit\n/exit\n" "(4, 2)"
+check "graph: pow reversed cube" "/graph\nx = pow(y,3)\nexit\n/exit\n" "(8, 2)"
+
+# Check actual canvas dimensions and markers, excluding labels and indentation.
+check_grid() {
+    local expr="$1" out
+    out=$(printf '/tac off\n/graph\n%s\n/exit\n' "$expr" | "$BIN" 2>&1)
+    if printf '%s\n' "$out" | awk '
+        /200 x 75 canvas$/ && !started { plotting = 1; started = 1; next }
+        plotting && rows < 75 {
+            row = substr($0, 13, 200)
+            if (length($0) != 212 || row ~ /[^ .|+\-]/) bad = 1
+            if (index(row, ".")) dots = 1
+            rows++; next
+        }
+        plotting && rows == 75 { if ($0 !~ /^            -10/) bad = 1; plotting = 0 }
+        END { exit !(rows == 75 && dots && !bad && !plotting) }
+    '; then
+        echo "PASS: graph: 200x75 dot canvas ($expr)"
+        pass=$((pass + 1))
+    else
+        echo "FAIL: graph: 200x75 dot canvas ($expr)"
+        fail=$((fail + 1))
+    fi
+}
+check_grid "y = x^2"
+check_grid "pow(y,2)"
+check_grid "pow(y,3)"
+
 # /eqn
 check "eqn: linear"               "/eqn\n2*x + 5 = 15\nexit\n/exit\n"             "x = 5"
 check "eqn: quadratic"            "/eqn\nx^2 - 5*x + 6 = 0\nexit\n/exit\n"        "x = 2"
@@ -58,6 +105,20 @@ check "eqn: difference of squares" "/eqn\nx^2 - 4 = 0\nexit\n/exit\n"           
 check "eqn: cubic"                "/eqn\nx^3 - x = 0\nexit\n/exit\n"             "x = 0"
 check "eqn: variable named y"     "/eqn\ny^2 = 4\nexit\n/exit\n"                  "y = 2"
 check "eqn: implicit mult 3x=1"   "/eqn\n3x=1\nexit\n/exit\n"                    "x = 0.333333"
+
+# Polynomial roots: arbitrary variables and complex conjugates.
+check "eqn: linear z" "/eqn\n3*z + 6 = 0\n/exit\n" "z = -2"
+check "eqn: quadratic y complex plus" "/eqn\ny^2 - 2*y + 5 = 0\n/exit\n" "y = 1 + 2i"
+check "eqn: quadratic y complex minus" "/eqn\ny^2 - 2*y + 5 = 0\n/exit\n" "y = 1 - 2i"
+check "eqn: pow z imaginary" "/eqn\npow(z,2) + 1 = 0\n/exit\n" "z = 0 + 1i"
+check "eqn: cubic z real" "/eqn\npow(z,3) - 1 = 0\n/exit\n" "z = 1"
+check "eqn: cubic z complex plus" "/eqn\npow(z,3) - 1 = 0\n/exit\n" "z = -0.5 + 0.866025i"
+check "eqn: cubic z complex minus" "/eqn\npow(z,3) - 1 = 0\n/exit\n" "z = -0.5 - 0.866025i"
+check "eqn: cubic outside scan" "/eqn\n(y-30)*(y-40)*(y-50) = 0\n/exit\n" "y = 50"
+check "eqn: cubic repeated" "/eqn\n(z-2)^3 = 0\n/exit\n" "z = 2"
+check "eqn: both equation sides" "/eqn\nz^3 = 6*z^2 - 11*z + 6\n/exit\n" "z = 3"
+check "eqn: identity" "/eqn\ny-y = 0\n/exit\n" "Infinitely many solutions."
+check "eqn: inconsistent" "/eqn\nz-z = 1\n/exit\n" "No solution."
 
 # power / implicit multiplication (previously reported as "power not working")
 check "calc: pow with y"          "/calc\ny = 3\npow(y,2)\nexit\n/exit\n"        "9"

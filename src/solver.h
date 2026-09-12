@@ -3,11 +3,9 @@
 
 #include "ast.h"
 
-/* Runs one parsed /eqn statement: stmt must be "expr = expr".
- * Solves for x using a closed-form quadratic formula when the
- * equation fits a degree <= 2 polynomial (detected by sampling,
- * see solver.c), and falls back to a bisection scan otherwise --
- * matching docs/GRAMMAR.md section on the /eqn back-end. */
+/* Solves expr = expr for its single non-constant variable. Degree 1-3
+ * polynomials return all real/complex roots, including multiplicity;
+ * other expressions retain the numerical real-root fallback. */
 void solver_run(ASTNode *stmt, int show_tac);
 
 #endif
