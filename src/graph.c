@@ -11,13 +11,14 @@
 #include "errors.h"
 #include "util.h"
 #include "rootfind.h"
+#include "graph_export.h"
 
 #define GRAPH_WIDTH   200  /* columns sampled across the horizontal range */
 #define GRAPH_HEIGHT  75  /* rows of the ASCII plot                       */
 /* Terminal cells are approximately twice as tall as wide. */
 #define DEFAULT_Y_HI (20.0*(GRAPH_HEIGHT-1)/(GRAPH_WIDTH-1))
 GraphSettings graph2d_settings = {{-10,-DEFAULT_Y_HI,-10},{10,DEFAULT_Y_HI,10},32};
-GraphSettings graph3d_settings = {{-10,-10,-10},{10,10,10},192};
+GraphSettings graph3d_settings = {{-50,-50,-50},{50,50,50},64};
 #define AXIS_LO (graph2d_settings.lo[0])
 #define AXIS_HI (graph2d_settings.hi[0])
 #define VIEW_Y_LO (graph2d_settings.lo[1])
@@ -181,20 +182,20 @@ static void sample_unit_slices(ASTNode *lhs,ASTNode *rhs,const char *h,const cha
         Slice2D slice={ticks[i],reverse,0};
         symtab_set(reverse?v:h,slice.fixed);
         rootfind_visit(lhs,rhs,reverse?h:v,reverse?AXIS_LO:VIEW_Y_LO,
-                       reverse?AXIS_HI:VIEW_Y_HI,graph2d_settings.samples*64,slice_point,&slice);
+                       reverse?AXIS_HI:VIEW_Y_HI,(graph2d_settings.samples<4?graph2d_settings.samples:4)*64,slice_point,&slice);
     }
 }
 /* Sweep both axes: vertical components and steep sections need the
  * reverse pass; streamed roots have no per-column branch limit. */
 static void sample_equation(ASTNode *lhs,ASTNode *rhs,const char *h,const char *v) {
-    int count=GRAPH_SAMPLES-1;
+    int count=GRAPH_WIDTH*2;
     for (int reverse=0;reverse<2;reverse++) {
         double lo=reverse?VIEW_Y_LO:AXIS_LO, hi=reverse?VIEW_Y_HI:AXIS_HI;
         for (int i=0;i<=count;i++) {
             Slice2D slice={lo+(hi-lo)*(i/(double)count),reverse,0};
             symtab_set(reverse?v:h,slice.fixed);
             rootfind_visit(lhs,rhs,reverse?h:v,reverse?AXIS_LO:VIEW_Y_LO,
-                           reverse?AXIS_HI:VIEW_Y_HI,graph2d_settings.samples*64,slice_point,&slice);
+                           reverse?AXIS_HI:VIEW_Y_HI,(graph2d_settings.samples<4?graph2d_settings.samples:4)*64,slice_point,&slice);
         }
         sample_unit_slices(lhs,rhs,h,v,reverse);
     }
@@ -219,10 +220,10 @@ static void graph_function(ASTNode *rhs,int show_tac) {
     }
     ASTNode *y=ast_var("y");
     /* Supplement direct samples with roots along horizontal scan lines. */
-    for (int i=0;i<=GRAPH_HEIGHT*graph2d_settings.samples;i++) {
-        Slice2D slice={VIEW_Y_LO+(VIEW_Y_HI-VIEW_Y_LO)*(i/(double)(GRAPH_HEIGHT*graph2d_settings.samples)),1,0};
+    for (int i=0;i<=GRAPH_HEIGHT*(graph2d_settings.samples<4?graph2d_settings.samples:4);i++) {
+        Slice2D slice={VIEW_Y_LO+(VIEW_Y_HI-VIEW_Y_LO)*(i/(double)(GRAPH_HEIGHT*(graph2d_settings.samples<4?graph2d_settings.samples:4))),1,0};
         symtab_set("y",slice.fixed);
-        rootfind_visit(y,rhs,var,AXIS_LO,AXIS_HI,graph2d_settings.samples*64,slice_point,&slice);
+        rootfind_visit(y,rhs,var,AXIS_LO,AXIS_HI,(graph2d_settings.samples<4?graph2d_settings.samples:4)*64,slice_point,&slice);
     }
     sample_unit_slices(y,rhs,var,"y",1);
     ast_free(y);
@@ -235,6 +236,8 @@ static void graph_function(ASTNode *rhs,int show_tac) {
         printf("  %s = %-6s -> y = %s\n",var,format_number(x),ok&&isfinite(value)?format_number(value):"(undefined)");
     }
     render(var,"y");
+    char export_names[3][64]; snprintf(export_names[0],64,"%s",var);strcpy(export_names[1],"y");strcpy(export_names[2],"z");
+    ASTNode *export_y=ast_var("y");graph_export_view(2,export_y,rhs,export_names,&graph2d_settings,"function","z",1);ast_free(export_y);
     if (skipped) printf("\n(%d of %d sample points were outside the real-valued domain and skipped.)\n",skipped,GRAPH_SAMPLES);
 restore:
     if (had_h) symtab_set(var,saved_h); else symtab_unset(var);
@@ -272,6 +275,8 @@ static void graph_equation_1var(ASTNode *lhs,ASTNode *rhs,const char *name,int s
     printf("Roots in the visible range:\n");
     rootfind_visit(lhs,rhs,name,AXIS_LO,AXIS_HI,graph2d_settings.samples*256,number_line_root,&line);
     if (!line.count) printf("No solution found for '%s' in the search range [%g, %g].\n",name,AXIS_LO,AXIS_HI);
+    char export_names[3][64];snprintf(export_names[0],64,"%s",name);strcpy(export_names[1],"__vertical");strcpy(export_names[2],"__depth");
+    graph_export_view(2,lhs,rhs,export_names,&graph2d_settings,"numberline","z",1);
     if (line.count>64) printf("(First 64 detected roots listed; all %d detected points drawn.)\n",line.count);
     printf("\nNumber line (%s from %g to %g, '.' forms the axis, 'o' marks 1/3 units, '*' marks a root):\n  %s\n",name,AXIS_LO,AXIS_HI,line.line);
 restore:
@@ -292,9 +297,11 @@ static void graph_equation_2var(ASTNode *lhs,ASTNode *rhs,const char *h,const ch
     double ticks[GRAPH_WIDTH]; int nticks=unit_ticks(AXIS_LO,AXIS_HI,GRAPH_WIDTH,ticks);
     for (int i=0;i<nticks;i++) {
         Slice2D slice={ticks[i],0,1}; symtab_set(h,slice.fixed);
-        rootfind_visit(lhs,rhs,v,VIEW_Y_LO,VIEW_Y_HI,graph2d_settings.samples*64,slice_point,&slice);
+        rootfind_visit(lhs,rhs,v,VIEW_Y_LO,VIEW_Y_HI,(graph2d_settings.samples<4?graph2d_settings.samples:4)*64,slice_point,&slice);
     }
     render(h,v);
+    char export_names[3][64];snprintf(export_names[0],64,"%s",h);snprintf(export_names[1],64,"%s",v);strcpy(export_names[2],"__depth");
+    graph_export_view(2,lhs,rhs,export_names,&graph2d_settings,"implicit","z",1);
 restore:
     if (had_h) symtab_set(h,saved_h); else symtab_unset(h);
     if (had_v) symtab_set(v,saved_v); else symtab_unset(v);

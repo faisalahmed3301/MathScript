@@ -32,11 +32,11 @@ Write-Host "== Step 2/3: Bison (parser) ==" -ForegroundColor Cyan
 if ($LASTEXITCODE -ne 0) { throw "bison failed" }
 
 Write-Host "== Step 3/3: GCC (compile + link) ==" -ForegroundColor Cyan
-& $Cc -I build -I src `
+& $Cc -O2 -I build -I src `
     build/lex.yy.c `
     build/parser.tab.c `
     src/main.c src/ast.c src/symtab.c src/errors.c src/eval.c `
-    src/ir.c src/util.c src/calc.c src/graph.c src/graph3d.c src/solver.c src/poly.c src/rootfind.c src/codegen.c `
+    src/ir.c src/util.c src/calc.c src/graph.c src/graph3d.c src/graph_export.c src/solver.c src/poly.c src/rootfind.c src/codegen.c `
     -o build/mathscript.exe -lm
 if ($LASTEXITCODE -ne 0) { throw "gcc failed" }
 

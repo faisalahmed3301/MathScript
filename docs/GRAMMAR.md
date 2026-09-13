@@ -155,18 +155,15 @@ commands only in 3D mode and remain ordinary identifiers elsewhere.
 right-handed rotation. The choice persists until changed or the mode is entered
 again. Equations then dispatch to `graph3d_run()` in `src/graph3d.c`. An equation is
 interpreted as `lhs - rhs = 0`; a bare expression in up to two variables
-(excluding `z`) is shorthand for `z = expr`. The backend scans slices along
-all three axes using `rootfind_visit()`, retains every detected branch,
-and renders a point cloud as an ASCII preview and an offline HTML viewer.
-Both views draw x, y, and z reference axes as continuous, densely dotted lines.
-The HTML axes use screen-pixel dot density with larger whole-unit markers.
-Dot density is independent of mathematical unit spacing and preserves the
-existing canvas size and coordinate scale.
-The HTML export carries the selected rotation and animates the point cloud
-and reference axes around the view center using a frame clock. The terminal
-preview remains static.
-Constant polynomial slices that vanish identically contribute a whole sampled
-line. General nonlinear slices use numerical root refinement. No finite scan
+(excluding `z`) is shorthand for `z = expr`. The backend validates the equation
+and exports its compact model to an offline HTML viewer. In a background worker,
+explicit surfaces are sampled directly; implicit surfaces are scanned along all
+three axes with numerical root refinement. A fast preview is followed by bounded
+refinement, with adaptive sampling and a point limit for responsiveness.
+The viewer renders GPU geometry and batched dotted reference axes. Rotation uses
+elapsed frame time, preserving angular speed when frame intervals vary. The 3D
+CLI no longer computes a terminal point cloud or embeds coordinates in HTML.
+Slices that vanish identically contribute sampled points along the line. General nonlinear slices use numerical root refinement. No finite scan
 can guarantee every solution of an arbitrary equation.
 
 `/range` and `/samples` are REPL commands handled before expression parsing,

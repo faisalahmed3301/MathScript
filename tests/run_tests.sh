@@ -5,11 +5,15 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=./build/mathscript
+BIN="$PWD/build/mathscript"
 if [ ! -x "$BIN" ]; then
     echo "Build first: ./build.sh"
     exit 1
 fi
+
+test_dir=$(mktemp -d)
+trap 'rm -rf "$test_dir"' EXIT
+cd "$test_dir"
 
 pass=0
 fail=0
@@ -79,7 +83,7 @@ check_grid() {
         /200 x 75 canvas$/ && !started { plotting = 1; started = 1; next }
         plotting && rows < 75 {
             row = substr($0, 13, 200)
-            if (length($0) != 212 || row ~ /[^ .*]/) bad = 1
+            if (length($0) != 212 || row ~ /[^ .o*]/) bad = 1
             if (index(row, ".")) dots = 1
             rows++; next
         }

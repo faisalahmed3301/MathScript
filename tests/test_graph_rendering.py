@@ -2,6 +2,11 @@
 """Behavior checks for terminal geometry and domain gaps (Python 3)."""
 from pathlib import Path
 import subprocess
+import tempfile
+import atexit
+
+TEMP = tempfile.TemporaryDirectory(prefix="mathscript-2d-tests-")
+atexit.register(TEMP.cleanup)
 
 BIN = Path(__file__).resolve().parents[1] / 'build' / 'mathscript'
 WIDTH, HEIGHT = 200, 75
@@ -11,7 +16,7 @@ Y_LIMIT = 20*(HEIGHT-1)/(WIDTH-1)
 def plot(expr):
     script = f'/tac off\n/calc\nx=7\ny=9\n/graph2d\n{expr}\n/calc\nx+y\n/exit\n'
     output = subprocess.run([str(BIN)], input=script, text=True,
-                            capture_output=True, check=True).stdout
+                            capture_output=True, check=True, cwd=TEMP.name).stdout
     lines = output.splitlines()
     start = next(i for i, line in enumerate(lines) if line.endswith("200 x 75 canvas")) + 1
     rows = [line[12:] for line in lines[start:start+HEIGHT]]
@@ -20,8 +25,8 @@ def plot(expr):
     assert lines[start+HEIGHT][12:].split()[:-1] == [str(n) for n in range(-10,11)]
     assert [int(line[:12]) for line in lines[start:start+HEIGHT] if line[:12].strip()] == list(range(7,-8,-1))
     assert 'Sampling: 32 points per column (6369 horizontal positions)' in output
-    assert all(set(row) <= set(" .") for row in rows), "extra border/grid marks"
-    assert all(row[0] in " ." and row[-1] in " ." for row in rows), "side border"
+    assert all(set(row) <= set(" .o") for row in rows), "extra border/grid marks"
+    assert all(row[0] in " .o" and row[-1] in " .o" for row in rows), "side border"
     assert 'calc> 16\n' in output, 'graph changed stored variables'
     assert 'Grid:' not in output and '200 x 75 canvas' in output
     # Axes and curves now both use dots. Check geometry away from the axes.
@@ -73,10 +78,10 @@ lines = out.splitlines()
 start = next(i for i, line in enumerate(lines) if line.endswith("200 x 75 canvas")) + 1
 axis = lines[start+ZERO_ROW]
 assert axis[:12].strip() == '0'
-assert axis[12:]=='.'*WIDTH, 'horizontal axis must be continuous dots'
-assert all(line[12+WIDTH//2]=='.' for line in lines[start:start+HEIGHT]), 'vertical axis must be continuous dots'
-assert sum(line[12:].count('.') for line in lines[start:start+HEIGHT])==WIDTH+HEIGHT-1
-assert all(set(line[12:]) <= {' ','.'} for line in lines[start:start+HEIGHT])
+assert all(c in '.o' for c in axis[12:]), 'horizontal axis must be continuous dots'
+assert all(line[12+WIDTH//2] in '.o' for line in lines[start:start+HEIGHT]), 'vertical axis must be continuous dots'
+assert sum(sum(c in '.o' for c in line[12:]) for line in lines[start:start+HEIGHT])==WIDTH+HEIGHT-1
+assert all(set(line[12:]) <= {' ','.','o'} for line in lines[start:start+HEIGHT])
 # The photographed sideways parabola must keep both branches and use
 # significantly more of the height than the old [-20, 20] viewport.
 out, dots = plot('pow(y,2)=4*x+3')

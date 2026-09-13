@@ -46,7 +46,12 @@ static void scan(ASTNode *lhs, ASTNode *rhs, const char *name,
                 double fm = difference_at(lhs, rhs, name, m, &mok);
                 if (!mok) break;
                 if (fm == 0 || fabs(fm) < scale*1e-12) { emit_root(m, &unique); break; }
-                if (m == a || m == b) break;
+                if (m == a || m == b) {
+                    /* At large coordinates the bracket can reach floating-point
+                     * resolution before the relative residual target. */
+                    if (fabs(fm) < scale*1e-6) emit_root(m, &unique);
+                    break;
+                }
                 if (signbit(fa) != signbit(fm)) b = m;
                 else { a = m; fa = fm; }
             }

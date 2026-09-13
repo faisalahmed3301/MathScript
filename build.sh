@@ -32,11 +32,11 @@ echo "== Step 2/3: Bison (parser) =="
 bison -d -o build/parser.tab.c src/parser.y
 
 echo "== Step 3/3: $CC (compile + link) =="
-"$CC" -I build -I src \
+"$CC" -O2 -I build -I src \
     build/lex.yy.c \
     build/parser.tab.c \
     src/main.c src/ast.c src/symtab.c src/errors.c src/eval.c \
-    src/ir.c src/util.c src/calc.c src/graph.c src/graph3d.c src/solver.c src/poly.c src/rootfind.c src/codegen.c \
+    src/ir.c src/util.c src/calc.c src/graph.c src/graph3d.c src/graph_export.c src/solver.c src/poly.c src/rootfind.c src/codegen.c \
     -o build/mathscript -lm
 
 echo

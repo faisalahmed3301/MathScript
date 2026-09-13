@@ -96,6 +96,9 @@ Type `/help` at any top-level prompt for the full command list,
 to print the operator precedence table with worked examples, and
 `/symbols` to inspect the symbol table.
 
+Type `/clear` at any prompt to clear the terminal screen. Your current mode,
+variables, and settings are preserved.
+
 ## 3. Language quick reference
 
 | Category      | Examples |
@@ -201,30 +204,90 @@ cylinder. `x`, `y`, `z` keep their conventional axis order; other variable
 names are ordered alphabetically, with unused standard names filling empty axes.
 `pi` and `e` remain constants, and graphing restores stored calculator variables.
 
-Each 3D graph prints an isometric terminal preview and saves a new
-`output/graph3d_NNN.html` file relative to the working directory (which must
-contain a writable `output/` directory). Open the printed file in any modern browser.
-The HTML graph starts rotating automatically at 30 degrees per second around
-the selected coordinate axis through the view center. The default view places
-y vertically and x horizontally, with z showing depth. Rotation preserves
-the sampled coordinates and coordinate scale. Use **Pause rotation** /
-**Resume rotation** to control animation; **Reset view** resets its angle and
-camera. It works offline: drag or use arrow keys to adjust the camera, and
-scroll or use `+`/`-` to zoom. Animation pauses while dragging or when the tab
-is hidden. The terminal preview is static; open the printed HTML file to see
-the selected rotation.
-The x, y, and z axes form continuous dotted lines in both the terminal and
-browser views. Browser axes use tiny dots at screen-pixel density (thousands
-across a typical view), with larger markers at whole units. Red, green, and
-blue distinguish the axes. Dot density follows zoom and display resolution
-without changing mathematical scale or canvas size. If zero is outside the
-view, reference axes move to the nearest visible boundary.
-Existing graph files are preserved. Run `examples/graph3d_examples.ms` for a demo.
+Both graph modes export a compact, standalone HTML file. The latest file is
+replaced after each successful graph; each individual graph is also archived:
 
-The default 3D range is `[-10,10]` on each axis with 64 subdivisions per axis.
-Use `/range xmin xmax ymin ymax zmin zmax` and `/samples N` (integer 4–256)
-to adjust the next plot. Higher resolution takes more time and memory.
+```text
+output/
+├── graph2d/
+│   ├── graph2d.html
+│   └── all2dgraphs/       # individual 2D graphs
+└── graph3d/
+    ├── graph3d.html
+    └── all3dgraphs/       # individual 3D graphs
+```
+
+Open `graph2d.html` or `graph3d.html` in a browser. Reload the page after entering
+another equation to see the latest graph. Archives remain independent and work
+offline. Output folders are created automatically. To move older flat
+`output/graph3d_NNN.html` files into the archive without overwriting any graph,
+run `python3 tools/migrate_graphs.py`.
+
+The 2D HTML viewer supports ordinary functions, implicit curves, sideways
+curves, and single-variable root number lines. Drag to pan, scroll to zoom,
+change axis ranges, or enter fullscreen. A bounded terminal preview remains
+available in 2D mode.
+
+3D exports contain the validated equation and settings, **not a huge list of
+sampled points**. Geometry is calculated in a background browser worker:
+a quick preview appears first, followed by a refinement pass with a roughly
+1.8-second sampling budget. Complex equations automatically use a smaller
+sampling grid, and the point count is bounded. A limit message means the view
+is a finite preview; narrow the range to resolve small features. The initial
+C export does no volume sampling, so even complicated equations export quickly.
+
+The browser stores geometry in GPU buffers. Axis strokes are batched, normal
+vectors are calculated in the worker, and automatic display resolution adapts
+to frame times. Rotation follows elapsed time rather than a fixed step per
+frame, so a slower frame does not change the selected angular speed. These
+limits target responsive interaction; exact timings depend on the equation
+and hardware. Animation pauses during dragging and while the tab is hidden.
+
+The 3D HTML viewer has a dark control sidebar and a dedicated graph workspace:
+
+- **Fullscreen** expands the graph and its view controls; press Escape to leave.
+- **Rotation** supports the X, Y, or Z axis, clockwise or counterclockwise, with pause/resume.
+- **Axis ranges** accepts min/max bounds and a span slider for each axis. Click
+  **Apply ranges** to recalculate the surface in a background worker. Each axis
+  supports a total span of up to 1,000 units (for example, −500 to +500).
+  **Reset** restores −50 to +50 on all axes.
+- **Grid, axes, opacity, zoom, and resolution** adjust the view immediately.
+  **Surface detail** recalculates geometry; display resolution changes pixel sharpness.
+- Explicit height surfaces use smooth meshes when WebGL is available. Implicit
+  equations retain all sampled branches as a point surface. A canvas fallback
+  supports browsers without WebGL. Small features may need a narrower range or
+  higher surface detail, particularly at large ranges.
+
+The x/y axes have denser dotted strokes than z. Scale labels adapt to zoom
+and range to remain readable. Existing graph files are preserved; generate a new
+HTML file to use an updated viewer. Run `examples/graph3d_examples.ms` for a demo.
+
+The default 3D range is `[-50,50]` on every axis: **100 × 100 × 100** total units,
+with a default requested sampling detail of 64. The browser may adapt this
+detail to its computation budget.
+Use `/range xmin xmax ymin ymax zmin zmax` and `/samples N` (integer 4–512)
+to adjust the next plot in MathScript. Browser controls only change that HTML
+view, and work offline without restarting MathScript. The browser detail selector
+can request another sampling level. Higher requested detail is subject to the
+same time and point limits.
 2D and 3D settings are independent.
+
+### Editing the graph UI
+
+Edit `viewer/graph2d.html` or `viewer/graph3d.html` for layout, the matching
+`.js` file for controls, and shared `viewer/graph3d.css` for styles.
+`viewer/math.js` compiles tagged math expressions, while `sampler.js` and
+`sampler2d.js` implement the background numerical samplers. Then run:
+
+```bash
+python3 tools/embed_viewer.py
+bash build.sh
+```
+
+The generator updates `src/graph2d_viewer.h` and `src/graph3d_viewer.h`. These
+headers are checked in so normal builds need no Python dependency. `make viewer`
+also regenerates them. Each HTML embeds all assets and the equation; no CDN,
+server, or external data file is needed. C builds use `-O2` optimization.
 
 A continuous graph has infinitely many points: these are **finite numerical
 samples within the chosen range**, not an exact enumeration of all solutions.
@@ -292,6 +355,10 @@ python3 tests/test_polynomial_roots.py       # optional full root-set checks (Py
 python3 tests/test_graph_rendering.py        # geometry, clipping, and domain-gap checks
 python3 tests/test_graph3d.py                # 3D surface geometry, branches, settings
 node tests/test_graph3d_viewer.js            # offline viewer drawing and controls
+node tests/test_graph3d_sampler.js           # browser range resampling and meshes
+node tests/test_graph2d_sampler.js           # 2D browser curves and roots
+python3 tests/test_graph_exports.py          # latest files, archives and compact exports
+python3 tools/embed_viewer.py --check        # ensure embedded UI matches its sources
 .\build.ps1 ; .\tests\run_tests.ps1         # Windows
 ```
 
