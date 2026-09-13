@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <ctype.h>
+#include <errno.h>
 #include "graph.h"
 #include "ir.h"
 #include "eval.h"
@@ -12,53 +14,102 @@
 
 #define GRAPH_WIDTH   200  /* columns sampled across the horizontal range */
 #define GRAPH_HEIGHT  75  /* rows of the ASCII plot                       */
-#define AXIS_LO      -10.0 /* horizontal (plotted-variable) range          */
-#define AXIS_HI       10.0
-/* Monospace terminal cells are usually about twice as tall as wide.
- * Match physical distance per math unit on both axes, independent of the
- * canvas dimensions. This keeps circles round and slopes proportional. */
-#define CELL_HEIGHT_TO_WIDTH 2.0
-#define VIEW_Y_HI ((AXIS_HI - AXIS_LO) * CELL_HEIGHT_TO_WIDTH * (GRAPH_HEIGHT - 1) / (2.0 * (GRAPH_WIDTH - 1)))
-#define VIEW_Y_LO (-VIEW_Y_HI)
-#define Y_DEFAULT_LO -50.0  /* implicit root search, independent of viewport */
-#define Y_DEFAULT_HI  50.0
-#define GRAPH_SAMPLES ((GRAPH_WIDTH - 1) * 16 + 1)
-#define MAX_PTS_PER_COL 4  /* an implicit curve (e.g. a circle) can have more than one y per x */
+/* Terminal cells are approximately twice as tall as wide. */
+#define DEFAULT_Y_HI (20.0*(GRAPH_HEIGHT-1)/(GRAPH_WIDTH-1))
+GraphSettings graph2d_settings = {{-10,-DEFAULT_Y_HI,-10},{10,DEFAULT_Y_HI,10},32};
+GraphSettings graph3d_settings = {{-10,-10,-10},{10,10,10},192};
+#define AXIS_LO (graph2d_settings.lo[0])
+#define AXIS_HI (graph2d_settings.hi[0])
+#define VIEW_Y_LO (graph2d_settings.lo[1])
+#define VIEW_Y_HI (graph2d_settings.hi[1])
+#define GRAPH_SAMPLES ((GRAPH_WIDTH - 1) * graph2d_settings.samples + 1)
+static char canvas[GRAPH_HEIGHT][GRAPH_WIDTH+1];
+static int visible, clipped;
 
-typedef struct {
-    double y[MAX_PTS_PER_COL];
-    int n;
-} Column;
-
-/* Dense samples draw the curve with dots directly, without joining across
- * poles or undefined regions. Off-screen values are clipped, never clamped
- * onto the frame or used to stretch the axes. */
-static void render(const char *h_name, const char *v_name, const Column *cols) {
-    static char canvas[GRAPH_HEIGHT][GRAPH_WIDTH + 1];
-    /* Map the origin exactly like curve samples, including odd row counts. */
-    int zero_row = (int)round(VIEW_Y_HI / (VIEW_Y_HI - VIEW_Y_LO) * (GRAPH_HEIGHT - 1));
-    int zero_col = (int)round(-AXIS_LO / (AXIS_HI - AXIS_LO) * (GRAPH_WIDTH - 1));
-    for (int r = 0; r < GRAPH_HEIGHT; r++) {
-        memset(canvas[r], ' ', GRAPH_WIDTH);
-        canvas[r][GRAPH_WIDTH] = '\0';
-    }
-    for (int c = 0; c < GRAPH_WIDTH; c++) canvas[zero_row][c] = '-';
-    for (int r = 0; r < GRAPH_HEIGHT; r++) canvas[r][zero_col] = '|';
-    canvas[zero_row][zero_col] = '+';
-
-    int visible = 0, clipped = 0;
-    for (int i = 0; i < GRAPH_SAMPLES; i++) {
-        int col = (int)round(i * (GRAPH_WIDTH - 1.0) / (GRAPH_SAMPLES - 1));
-        for (int j = 0; j < cols[i].n; j++) {
-            double y = cols[i].y[j];
-            if (!isfinite(y)) continue;
-            if (y < VIEW_Y_LO || y > VIEW_Y_HI) { clipped++; continue; }
-            int row = (int)round((VIEW_Y_HI - y) / (VIEW_Y_HI - VIEW_Y_LO) * (GRAPH_HEIGHT - 1));
-            canvas[row][col] = '.';
-            visible++;
+int graph_command(const char *line, int dimensions) {
+    GraphSettings *s = dimensions == 3 ? &graph3d_settings : &graph2d_settings;
+    if (!strncmp(line,"/range",6) && (line[6]==0 || isspace((unsigned char)line[6]))) {
+        double v[6];
+        const char *cursor=line+6; int valid=1;
+        for (int i=0;i<dimensions*2;i++) {
+            char *end; errno=0; v[i]=strtod(cursor,&end);
+            if (cursor==end || errno==ERANGE) { valid=0; break; }
+            cursor=end;
         }
+        while (isspace((unsigned char)*cursor)) cursor++;
+        if (!valid || *cursor) { printf("Usage: /range xmin xmax ymin ymax%s\n",dimensions==3?" zmin zmax":""); return 1; }
+        for (int i=0;i<dimensions;i++) {
+            if (!isfinite(v[2*i]) || !isfinite(v[2*i+1]) || v[2*i]>=v[2*i+1] || !isfinite(v[2*i+1]-v[2*i])) {
+                printf("Range bounds must be finite and increasing.\n"); return 1;
+            }
+        }
+        for (int i=0;i<dimensions;i++) { s->lo[i]=v[2*i]; s->hi[i]=v[2*i+1]; }
+        printf("%dD plot range updated. Enter an equation to plot it.\n",dimensions);
+        return 1;
     }
-
+    if (!strncmp(line,"/samples",8) && (line[8]==0 || isspace((unsigned char)line[8]))) {
+        const int max_samples=dimensions==3?512:256;
+        char *end; errno=0; long n=strtol(line+8,&end,10);
+        while (isspace((unsigned char)*end)) end++;
+        if (end==line+8 || *end || errno==ERANGE || n<4 || n>max_samples) {
+            printf("Usage: /samples N (integer from 4 to %d)\n",max_samples); return 1;
+        }
+        s->samples=(int)n;
+        printf("%dD sampling set to %d%s. Enter an equation to plot it.\n",dimensions,(int)n,dimensions==2?" samples per terminal column":" subdivisions per axis");
+        return 1;
+    }
+    return 0;
+}
+int graph_axis_marks(double lo,double hi,int capacity,double *values) {
+    int n=0;
+    for (int i=0;i<capacity;i++) {
+        double lower=lo+(hi-lo)*fmax(0,(i-.5)/(capacity-1));
+        double upper=lo+(hi-lo)*fmin(1,(i+.5)/(capacity-1));
+        double value=ceil(lower*3)/3;
+        if (isfinite(value) && value>=lo && value<=upper && value<=hi &&
+            (!n || value>values[n-1])) values[n++]=value==0?0:value;
+    }
+    return n;
+}
+static void clear_plot(void) {
+    visible=clipped=0;
+    for (int r=0;r<GRAPH_HEIGHT;r++) { memset(canvas[r],' ',GRAPH_WIDTH); canvas[r][GRAPH_WIDTH]=0; }
+    double axis_y=fmax(VIEW_Y_LO,fmin(0,VIEW_Y_HI));
+    double axis_x=fmax(AXIS_LO,fmin(0,AXIS_HI));
+    int zr=(int)round((VIEW_Y_HI-axis_y)/(VIEW_Y_HI-VIEW_Y_LO)*(GRAPH_HEIGHT-1));
+    int zc=(int)round((axis_x-AXIS_LO)/(AXIS_HI-AXIS_LO)*(GRAPH_WIDTH-1));
+    for (int col=0;col<GRAPH_WIDTH;col++) canvas[zr][col]='.';
+    for (int row=0;row<GRAPH_HEIGHT;row++) canvas[row][zc]='.';
+    double marks[GRAPH_WIDTH*2];
+    int n=graph_axis_marks(AXIS_LO,AXIS_HI,GRAPH_WIDTH*2,marks);
+    for (int i=0;i<n;i++) canvas[zr][(int)round((marks[i]-AXIS_LO)/(AXIS_HI-AXIS_LO)*(GRAPH_WIDTH-1))]='o';
+    n=graph_axis_marks(VIEW_Y_LO,VIEW_Y_HI,GRAPH_WIDTH*2,marks);
+    for (int i=0;i<n;i++) canvas[(int)round((VIEW_Y_HI-marks[i])/(VIEW_Y_HI-VIEW_Y_LO)*(GRAPH_HEIGHT-1))][zc]='o';
+}
+static void point(double x,double y) {
+    if (!isfinite(x) || !isfinite(y)) return;
+    if (x<AXIS_LO || x>AXIS_HI || y<VIEW_Y_LO || y>VIEW_Y_HI) { clipped++; return; }
+    int c=(int)round((x-AXIS_LO)/(AXIS_HI-AXIS_LO)*(GRAPH_WIDTH-1));
+    int r=(int)round((VIEW_Y_HI-y)/(VIEW_Y_HI-VIEW_Y_LO)*(GRAPH_HEIGHT-1));
+    canvas[r][c]='.'; visible++;
+}
+/* Whole-unit coordinates, with a bounded number of ticks even when a
+ * custom viewport spans billions of units. Wide views omit labels. */
+static int unit_ticks(double lo,double hi,int capacity,double *values) {
+    double step=fmax(1,ceil((hi-lo)/(capacity-1)));
+    double first=ceil(lo/step)*step;
+    int n=0;
+    for (int i=0;i<capacity;i++) {
+        double value=first+i*step;
+        if (!isfinite(value) || value>hi) break;
+        if (value>=lo && (n==0 || value>values[n-1])) values[n++]=value==0?0:value;
+    }
+    return n;
+}
+static void render(const char *h_name,const char *v_name) {
+    double xticks[GRAPH_WIDTH],yticks[GRAPH_HEIGHT];
+    int nx=unit_ticks(AXIS_LO,AXIS_HI,GRAPH_WIDTH,xticks);
+    int ny=unit_ticks(VIEW_Y_LO,VIEW_Y_HI,GRAPH_HEIGHT,yticks);
     printf("\nPlot (%s from %g to %g, %s from %g to %g):\n",
            h_name, AXIS_LO, AXIS_HI, v_name, VIEW_Y_LO, VIEW_Y_HI);
     printf("  %s  |  %d x %d canvas\n", v_name, GRAPH_WIDTH, GRAPH_HEIGHT);
@@ -66,7 +117,8 @@ static void render(const char *h_name, const char *v_name, const Column *cols) {
         /* Label whole coordinate values at their actual projected rows. */
         int has_tick = 0;
         double tick_value = 0;
-        for (double value = ceil(VIEW_Y_LO / 2) * 2; value <= VIEW_Y_HI; value += 2) {
+        for (int k = 0; k < ny; k++) {
+            double value=yticks[k];
             int tick_row = (int)round((VIEW_Y_HI - value) / (VIEW_Y_HI - VIEW_Y_LO) * (GRAPH_HEIGHT - 1));
             if (tick_row == r) { has_tick = 1; tick_value = value; break; }
         }
@@ -76,16 +128,25 @@ static void render(const char *h_name, const char *v_name, const Column *cols) {
     }
     char labels[GRAPH_WIDTH + 1];
     memset(labels, ' ', GRAPH_WIDTH); labels[GRAPH_WIDTH] = '\0';
-    for (int k = 0; k <= 10; k++) {
-        char label[16];
-        snprintf(label, sizeof(label), "%g", AXIS_LO + k * (AXIS_HI - AXIS_LO) / 10);
-        int len = (int)strlen(label), pos = (int)round(k * (GRAPH_WIDTH - 1) / 10.0) - len / 2;
+    int last_end=-1, omitted=0;
+    for (int k = 0; k < nx; k++) {
+        char label[32];
+        snprintf(label, sizeof(label), "%g", xticks[k]);
+        int len = (int)strlen(label);
+        int pos = (int)round((xticks[k]-AXIS_LO)/(AXIS_HI-AXIS_LO)*(GRAPH_WIDTH-1)) - len/2;
         if (pos < 0) pos = 0;
         if (pos + len > GRAPH_WIDTH) pos = GRAPH_WIDTH - len;
+        if (pos<=last_end) { omitted=1; continue; }
         memcpy(labels + pos, label, len);
+        last_end=pos+len;
     }
     printf("            %s  %s\n", labels, h_name);
-    printf("  Curve: .   Axes: | - +   (equal unit scale for 2:1 terminal cells)\n");
+    printf("  Curves/axis lines: .   Axis scale marks: o every 1/3 unit (3 intervals = 1 unit)\n");
+    if (AXIS_LO>0 || AXIS_HI<0 || VIEW_Y_LO>0 || VIEW_Y_HI<0)
+        printf("  Reference axes at x=%g, y=%g (zero is outside this view).\n",fmax(AXIS_LO,fmin(0,AXIS_HI)),fmax(VIEW_Y_LO,fmin(0,VIEW_Y_HI)));
+    if (omitted || AXIS_HI-AXIS_LO>GRAPH_WIDTH-1 || VIEW_Y_HI-VIEW_Y_LO>GRAPH_HEIGHT-1)
+        printf("  Some unit labels are omitted to fit this view; narrow /range to see each unit.\n");
+    printf("  Sampling: %d points per column (%d horizontal positions); fractional coordinates included.\n",graph2d_settings.samples,GRAPH_SAMPLES);
     if (clipped) printf("  Portions outside the visible range are clipped.\n");
     if (!visible) printf("  No real curve points in this view.\n");
 }
@@ -93,202 +154,158 @@ static void render(const char *h_name, const char *v_name, const Column *cols) {
 /* Finds the free variables (excluding constants pi/e) across an
  * equation's two sides. Returns how many distinct names were found,
  * writing up to 8 into names[][]. */
-static int free_vars(ASTNode *lhs, ASTNode *rhs, char names[][64]) {
+int graph_free_vars(ASTNode *lhs, ASTNode *rhs, char names[][64]) {
     char all[8][64];
     int all_count = 0;
     ast_collect_vars(lhs, all, 8, &all_count);
     ast_collect_vars(rhs, all, 8, &all_count);
     int n = 0;
     for (int i = 0; i < all_count; i++)
-        if (!symtab_is_constant(all[i])) strncpy(names[n++], all[i], 63);
+        if (!symtab_is_constant(all[i])) memcpy(names[n++], all[i], 64);
     return n;
 }
 
-/* --- y = f(var): the common case ------------------------------ */
-static void graph_function(ASTNode *rhs, int show_tac) {
-    char names[8][64];
-    int name_count = 0;
-    ast_collect_vars(rhs, names, 8, &name_count);
-    int free_count = 0;
-    char var_name[64] = "x";
-    for (int i = 0; i < name_count; i++) {
-        if (symtab_is_constant(names[i])) continue;
-        if (free_count == 0) strncpy(var_name, names[i], 63);
-        free_count++;
-    }
-    if (free_count > 1) {
-        semantic_error("/graph supports exactly one free variable, found %d (e.g. '%s' and '%s')",
-                        free_count, var_name, names[1]);
-        return;
-    }
-
-    double saved; int had = symtab_lookup(var_name, &saved);
-    symtab_set(var_name, 1.0);
-    int ok = 1;
-    eval(rhs, 1, &ok);
-    if (g_semantic_error) { if (had) symtab_set(var_name, saved); else symtab_unset(var_name); return; }
-
-    TACProgram tac;
-    tac_init(&tac);
-    const char *operand = tac_build(&tac, rhs);
-    tac_finish_graph(&tac, operand, var_name);
-    if (show_tac) { printf("IR (TAC):\n"); tac_print(&tac); }
-
-    static Column cols[GRAPH_SAMPLES];
-    double xs[GRAPH_SAMPLES];
-    int skipped = 0;
-    double step = (AXIS_HI - AXIS_LO) / (GRAPH_SAMPLES - 1);
-
-    for (int i = 0; i < GRAPH_SAMPLES; i++) {
-        double x = AXIS_LO + i * step;
-        xs[i] = x;
-        symtab_set(var_name, x);
-        int pok = 1;
-        double y = eval(rhs, 1, &pok);
-        if (pok && isfinite(y)) { cols[i].y[0] = y; cols[i].n = 1; }
-        else { cols[i].n = 0; skipped++; }
-    }
-    if (had) symtab_set(var_name, saved); else symtab_unset(var_name);
-
-    printf("Graph generated.\n\n");
-    printf("Sample points:\n");
-    for (int i = 0; i < GRAPH_SAMPLES; i += (GRAPH_SAMPLES - 1) / 8) {
-        if (cols[i].n)
-            printf("  %s = %-6s -> y = %s\n", var_name, format_number(xs[i]), format_number(cols[i].y[0]));
-        else
-            printf("  %s = %-6s -> y = (undefined)\n", var_name, format_number(xs[i]));
-    }
-
-    render(var_name, "y", cols);
-
-    if (skipped > 0)
-        printf("\n(%d of %d sample points were outside the real-valued domain and skipped.)\n",
-               skipped, GRAPH_SAMPLES);
+typedef struct { double fixed; int reverse, print; } Slice2D;
+static void slice_point(double root,void *context) {
+    Slice2D *s=context;
+    if (s->print) printf("  (%s, %s)\n",format_number(s->fixed),format_number(root));
+    else if (s->reverse) point(root,s->fixed);
+    else point(s->fixed,root);
 }
-
-/* --- an equation in exactly one variable, no dependent 'y' ------
- * e.g. "3*x = 1" or "x^2 = 4": solved like /eqn, then shown as
- * point(s) on a number line instead of a curve (there is no second
- * axis to plot against). */
-static void graph_equation_1var(ASTNode *lhs, ASTNode *rhs, const char *var_name, int show_tac) {
-    double saved; int had = symtab_lookup(var_name, &saved);
-    symtab_set(var_name, 0.0);
-    int ok = 1;
-    eval(lhs, 0, &ok);
-    if (ok) eval(rhs, 1, &ok);
-    if (g_semantic_error) { if (had) symtab_set(var_name, saved); else symtab_unset(var_name); return; }
-
-    TACProgram tac;
-    tac_init(&tac);
-    ASTNode *diff = ast_binop('-', lhs, rhs);
-    const char *operand = tac_build(&tac, diff);
-    tac_finish_eqn(&tac, operand);
-    free(diff);
-    if (show_tac) { printf("IR (TAC):\n"); tac_print(&tac); }
-
-    double roots[ROOTFIND_MAX];
-    int nroots = rootfind_solve(lhs, rhs, var_name, -25.0, 25.0, 5000, roots, &ok);
-    if (had) symtab_set(var_name, saved); else symtab_unset(var_name);
-
-    if (nroots == 0) {
-        printf("No solution found for '%s' in the search range [-25, 25].\n", var_name);
-        return;
+/* Include integer coordinates exactly, even when the dense sample lattice
+ * does not land on them. Fractional samples still supply the fine detail. */
+static void sample_unit_slices(ASTNode *lhs,ASTNode *rhs,const char *h,const char *v,int reverse) {
+    double ticks[GRAPH_WIDTH];
+    int n=unit_ticks(reverse?VIEW_Y_LO:AXIS_LO,reverse?VIEW_Y_HI:AXIS_HI,GRAPH_WIDTH,ticks);
+    for (int i=0;i<n;i++) {
+        Slice2D slice={ticks[i],reverse,0};
+        symtab_set(reverse?v:h,slice.fixed);
+        rootfind_visit(lhs,rhs,reverse?h:v,reverse?AXIS_LO:VIEW_Y_LO,
+                       reverse?AXIS_HI:VIEW_Y_HI,graph2d_settings.samples*64,slice_point,&slice);
     }
-    printf("%s:\n", nroots == 1 ? "Root" : "Roots");
-    for (int i = 0; i < nroots; i++) printf("%s = %s\n", var_name, format_number(roots[i]));
-
-    char line[GRAPH_WIDTH + 1];
-    memset(line, '-', GRAPH_WIDTH);
-    line[GRAPH_WIDTH] = '\0';
-    int zero_col = -1;
-    if (AXIS_LO <= 0 && AXIS_HI >= 0) {
-        zero_col = (int)round((0 - AXIS_LO) / (AXIS_HI - AXIS_LO) * (GRAPH_WIDTH - 1));
-        line[zero_col] = '+';
-    }
-    int shown = 0, hidden = 0;
-    for (int i = 0; i < nroots; i++) {
-        if (roots[i] < AXIS_LO || roots[i] > AXIS_HI) { hidden++; continue; }
-        int col = (int)round((roots[i] - AXIS_LO) / (AXIS_HI - AXIS_LO) * (GRAPH_WIDTH - 1));
-        line[col] = '.';
-        shown++;
-    }
-    printf("\nNumber line (%s from %g to %g, '+' marks %s=0, '.' marks a root):\n", var_name, AXIS_LO, AXIS_HI, var_name);
-    printf("  %s\n", line);
-    if (hidden > 0 && shown == 0)
-        printf("(all %d root(s) fall outside [%g, %g] and are not shown above.)\n", hidden, AXIS_LO, AXIS_HI);
-    else if (hidden > 0)
-        printf("(%d of %d root(s) fall outside [%g, %g] and are not shown above.)\n", hidden, nroots, AXIS_LO, AXIS_HI);
 }
-
-/* --- an equation in exactly two variables ------------------------
- * e.g. "3*x + 2*y = 6" or "x^2 + y^2 = 25": for each sampled value
- * of the horizontal variable, solve the vertical one via the same
- * root-finder /eqn uses. A circle naturally yields two y's for most
- * x -- both are plotted, which is what makes this handle conics as
- * well as lines. */
-static void graph_equation_2var(ASTNode *lhs, ASTNode *rhs, const char *h_name, const char *v_name, int show_tac) {
-    double saved_h; int had_h = symtab_lookup(h_name, &saved_h);
-    double saved_v; int had_v = symtab_lookup(v_name, &saved_v);
-
-    symtab_set(h_name, 0.0);
-    int ok = 1;
-    double roots0[ROOTFIND_MAX];
-    rootfind_solve(lhs, rhs, v_name, Y_DEFAULT_LO, Y_DEFAULT_HI, 400, roots0, &ok);
-    if (!ok) {
-        if (had_h) symtab_set(h_name, saved_h); else symtab_unset(h_name);
-        if (had_v) symtab_set(v_name, saved_v); else symtab_unset(v_name);
-        return;
-    }
-
-    TACProgram tac;
-    tac_init(&tac);
-    ASTNode *diff = ast_binop('-', lhs, rhs);
-    const char *operand = tac_build(&tac, diff);
-    tac_finish_eqn(&tac, operand);
-    free(diff);
-    if (show_tac) { printf("IR (TAC):\n"); tac_print(&tac); }
-
-    printf("Graph generated (implicit relation in %s and %s).\n", h_name, v_name);
-
-    static Column cols[GRAPH_SAMPLES];
-    double step = (AXIS_HI - AXIS_LO) / (GRAPH_SAMPLES - 1);
-    for (int i = 0; i < GRAPH_SAMPLES; i++) {
-        double h = AXIS_LO + i * step;
-        symtab_set(h_name, h);
-        double roots[ROOTFIND_MAX];
-        int rok = 1;
-        int n = rootfind_solve(lhs, rhs, v_name, Y_DEFAULT_LO, Y_DEFAULT_HI, 400, roots, &rok);
-        cols[i].n = 0;
-        if (rok) {
-            for (int j = 0; j < n && cols[i].n < MAX_PTS_PER_COL; j++)
-                cols[i].y[cols[i].n++] = roots[j];
+/* Sweep both axes: vertical components and steep sections need the
+ * reverse pass; streamed roots have no per-column branch limit. */
+static void sample_equation(ASTNode *lhs,ASTNode *rhs,const char *h,const char *v) {
+    int count=GRAPH_SAMPLES-1;
+    for (int reverse=0;reverse<2;reverse++) {
+        double lo=reverse?VIEW_Y_LO:AXIS_LO, hi=reverse?VIEW_Y_HI:AXIS_HI;
+        for (int i=0;i<=count;i++) {
+            Slice2D slice={lo+(hi-lo)*(i/(double)count),reverse,0};
+            symtab_set(reverse?v:h,slice.fixed);
+            rootfind_visit(lhs,rhs,reverse?h:v,reverse?AXIS_LO:VIEW_Y_LO,
+                           reverse?AXIS_HI:VIEW_Y_HI,graph2d_settings.samples*64,slice_point,&slice);
         }
+        sample_unit_slices(lhs,rhs,h,v,reverse);
     }
-
-    /* Keep readable coordinate samples independent of canvas resolution. */
-    printf("\nSample points (%s, %s):\n", h_name, v_name);
-    for (int i = 0; i <= 10; i++) {
-        double h = AXIS_LO + i * (AXIS_HI - AXIS_LO) / 10;
-        symtab_set(h_name, h);
-        double roots[ROOTFIND_MAX];
-        int rok = 1;
-        int n = rootfind_solve(lhs, rhs, v_name, Y_DEFAULT_LO, Y_DEFAULT_HI, 400, roots, &rok);
-        if (rok)
-            for (int j = 0; j < n && j < MAX_PTS_PER_COL; j++)
-                printf("  (%s, %s)\n", format_number(h), format_number(roots[j]));
+}
+static void graph_function(ASTNode *rhs,int show_tac) {
+    char names[8][64]; int n=graph_free_vars(rhs,NULL,names);
+    if (n>1) { semantic_error("/graph2d supports one independent variable; use /graph3d for surfaces"); return; }
+    const char *var=n?names[0]:"x";
+    double saved_h=0,saved_v=0; int had_h=symtab_lookup(var,&saved_h),had_v=symtab_lookup("y",&saved_v);
+    symtab_set(var,0); symtab_set("y",0);
+    if (!eval_validate(rhs)) goto restore;
+    if (show_tac) {
+        TACProgram tac; tac_init(&tac); const char *operand=tac_build(&tac,rhs);
+        tac_finish_graph(&tac,operand,var,AXIS_LO,AXIS_HI); printf("IR (TAC):\n"); tac_print(&tac);
     }
-    if (had_h) symtab_set(h_name, saved_h); else symtab_unset(h_name);
-    if (had_v) symtab_set(v_name, saved_v); else symtab_unset(v_name);
+    clear_plot();
+    int skipped=0;
+    for (int i=0;i<GRAPH_SAMPLES;i++) {
+        double x=AXIS_LO+(AXIS_HI-AXIS_LO)*(i/(double)(GRAPH_SAMPLES-1));
+        symtab_set(var,x); int ok=1; double y=eval(rhs,1,&ok);
+        if (ok && isfinite(y)) point(x,y); else skipped++;
+    }
+    ASTNode *y=ast_var("y");
+    /* Supplement direct samples with roots along horizontal scan lines. */
+    for (int i=0;i<=GRAPH_HEIGHT*graph2d_settings.samples;i++) {
+        Slice2D slice={VIEW_Y_LO+(VIEW_Y_HI-VIEW_Y_LO)*(i/(double)(GRAPH_HEIGHT*graph2d_settings.samples)),1,0};
+        symtab_set("y",slice.fixed);
+        rootfind_visit(y,rhs,var,AXIS_LO,AXIS_HI,graph2d_settings.samples*64,slice_point,&slice);
+    }
+    sample_unit_slices(y,rhs,var,"y",1);
+    ast_free(y);
+    printf("Graph generated.\n\nSample points:\n");
+    double ticks[GRAPH_WIDTH]; int nticks=unit_ticks(AXIS_LO,AXIS_HI,GRAPH_WIDTH,ticks);
+    for (int i=0;i<nticks;i++) {
+        double x=ticks[i]; symtab_set(var,x);
+        int ok=1; double value=eval(rhs,1,&ok);
+        if (ok && isfinite(value)) point(x,value);
+        printf("  %s = %-6s -> y = %s\n",var,format_number(x),ok&&isfinite(value)?format_number(value):"(undefined)");
+    }
+    render(var,"y");
+    if (skipped) printf("\n(%d of %d sample points were outside the real-valued domain and skipped.)\n",skipped,GRAPH_SAMPLES);
+restore:
+    if (had_h) symtab_set(var,saved_h); else symtab_unset(var);
+    if (had_v) symtab_set("y",saved_v); else symtab_unset("y");
+}
 
-    render(h_name, v_name, cols);
+typedef struct {
+    char line[GRAPH_WIDTH+1];
+    const char *name;
+    int count;
+} NumberLine;
+static void number_line_root(double root,void *context) {
+    NumberLine *line=context;
+    int col=(int)round((root-AXIS_LO)/(AXIS_HI-AXIS_LO)*(GRAPH_WIDTH-1));
+    if (col<0 || col>=GRAPH_WIDTH) return;
+    line->line[col]='*';
+    if (line->count<64) printf("%s = %s\n",line->name,format_number(root));
+    line->count++;
+}
+/* One-variable equations remain number lines, with the same configurable
+ * viewport and uncapped streamed root detection as the curve renderer. */
+static void graph_equation_1var(ASTNode *lhs,ASTNode *rhs,const char *name,int show_tac) {
+    double saved=0; int had=symtab_lookup(name,&saved);
+    symtab_set(name,0);
+    if (!eval_validate(lhs) || !eval_validate(rhs)) goto restore;
+    if (show_tac) {
+        TACProgram tac; tac_init(&tac); ASTNode *diff=ast_binop('-',lhs,rhs);
+        const char *operand=tac_build(&tac,diff); tac_finish_eqn(&tac,operand); free(diff);
+        printf("IR (TAC):\n"); tac_print(&tac);
+    }
+    NumberLine line={.name=name,.count=0};
+    memset(line.line,'.',GRAPH_WIDTH); line.line[GRAPH_WIDTH]=0;
+    double marks[GRAPH_WIDTH*2]; int n=graph_axis_marks(AXIS_LO,AXIS_HI,GRAPH_WIDTH*2,marks);
+    for (int i=0;i<n;i++) line.line[(int)round((marks[i]-AXIS_LO)/(AXIS_HI-AXIS_LO)*(GRAPH_WIDTH-1))]='o';
+    printf("Roots in the visible range:\n");
+    rootfind_visit(lhs,rhs,name,AXIS_LO,AXIS_HI,graph2d_settings.samples*256,number_line_root,&line);
+    if (!line.count) printf("No solution found for '%s' in the search range [%g, %g].\n",name,AXIS_LO,AXIS_HI);
+    if (line.count>64) printf("(First 64 detected roots listed; all %d detected points drawn.)\n",line.count);
+    printf("\nNumber line (%s from %g to %g, '.' forms the axis, 'o' marks 1/3 units, '*' marks a root):\n  %s\n",name,AXIS_LO,AXIS_HI,line.line);
+restore:
+    if (had) symtab_set(name,saved); else symtab_unset(name);
+}
+
+static void graph_equation_2var(ASTNode *lhs,ASTNode *rhs,const char *h,const char *v,int show_tac) {
+    double saved_h=0,saved_v=0; int had_h=symtab_lookup(h,&saved_h),had_v=symtab_lookup(v,&saved_v);
+    symtab_set(h,0); symtab_set(v,0);
+    if (!eval_validate(lhs) || !eval_validate(rhs)) goto restore;
+    if (show_tac) {
+        TACProgram tac; tac_init(&tac); ASTNode *diff=ast_binop('-',lhs,rhs);
+        const char *operand=tac_build(&tac,diff); tac_finish_eqn(&tac,operand); free(diff);
+        printf("IR (TAC):\n"); tac_print(&tac);
+    }
+    clear_plot(); sample_equation(lhs,rhs,h,v);
+    printf("Graph generated (implicit relation in %s and %s).\n\nSample points (%s, %s):\n",h,v,h,v);
+    double ticks[GRAPH_WIDTH]; int nticks=unit_ticks(AXIS_LO,AXIS_HI,GRAPH_WIDTH,ticks);
+    for (int i=0;i<nticks;i++) {
+        Slice2D slice={ticks[i],0,1}; symtab_set(h,slice.fixed);
+        rootfind_visit(lhs,rhs,v,VIEW_Y_LO,VIEW_Y_HI,graph2d_settings.samples*64,slice_point,&slice);
+    }
+    render(h,v);
+restore:
+    if (had_h) symtab_set(h,saved_h); else symtab_unset(h);
+    if (had_v) symtab_set(v,saved_v); else symtab_unset(v);
 }
 
 void graph_run(ASTNode *stmt, int show_tac) {
     if (stmt->kind != N_BINOP || stmt->op != '=') {
         char names[8][64];
-        int n = free_vars(stmt, NULL, names);
+        int n = graph_free_vars(stmt, NULL, names);
         if (n != 1) {
-            semantic_error("/graph expects a single-variable expression or an equation, e.g. y^2, y^3 = x, or y = x^2");
+            semantic_error("/graph2d expects a single-variable expression or an equation, e.g. y^2, y^3 = x, or y = x^2");
             return;
         }
         if (strcmp(names[0], "y") == 0) {
@@ -309,7 +326,7 @@ void graph_run(ASTNode *stmt, int show_tac) {
        variable assigned to 'y'. Kept as its own fast path since it
        is the primary, best-tested feature. */
     char rhs_names[8][64];
-    int rhs_count = free_vars(rhs, NULL, rhs_names);
+    int rhs_count = graph_free_vars(rhs, NULL, rhs_names);
     int rhs_has_y = 0;
     for (int i = 0; i < rhs_count; i++)
         if (strcmp(rhs_names[i], "y") == 0) rhs_has_y = 1;
@@ -321,10 +338,10 @@ void graph_run(ASTNode *stmt, int show_tac) {
     /* Otherwise: a general equation. Look at how many different
        variables it actually uses and dispatch accordingly. */
     char names[8][64];
-    int n = free_vars(lhs, rhs, names);
+    int n = graph_free_vars(lhs, rhs, names);
 
     if (n == 0) {
-        semantic_error("/graph needs at least one variable to plot");
+        semantic_error("/graph2d needs at least one variable to plot");
     } else if (n == 1) {
         graph_equation_1var(lhs, rhs, names[0], show_tac);
     } else if (n == 2) {
@@ -332,6 +349,6 @@ void graph_run(ASTNode *stmt, int show_tac) {
         const char *v = (h == names[0]) ? names[1] : names[0];
         graph_equation_2var(lhs, rhs, h, v, show_tac);
     } else {
-        semantic_error("/graph supports at most two variables, found %d", n);
+        semantic_error("/graph2d supports at most two variables, found %d", n);
     }
 }

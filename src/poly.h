@@ -7,6 +7,8 @@
 typedef struct { long double c[4]; } Polynomial;
 typedef struct { long double real, imag; } PolyRoot;
 int poly_extract(ASTNode *n, const char *variable, Polynomial *out);
+/* Treat other bound variables as coefficients for graph slices. */
+int poly_extract_slice(ASTNode *n, const char *variable, Polynomial *out);
 /* Returns degree roots, including multiplicity. Constant equations return 0. */
 int poly_solve(const Polynomial *p, PolyRoot roots[3]);
 #endif

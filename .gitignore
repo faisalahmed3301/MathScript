@@ -6,3 +6,4 @@ output/generated.c
 output/generated
 output/generated.exe
 *.o
+output/graph3d_*.html

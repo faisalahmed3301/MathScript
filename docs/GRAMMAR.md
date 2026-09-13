@@ -9,7 +9,8 @@ what actually executes.
 
 ```
 input        -> CALC_MODE
-             |  GRAPH_MODE
+             |  GRAPH2D_MODE
+             |  GRAPH3D_MODE
              |  EQN_MODE
              |  statement
 
@@ -43,7 +44,7 @@ arglist      -> /* empty */
 Precedence and associativity for the ambiguous `expr` rule are
 declared separately -- see `docs/OPERATOR_PRECEDENCE.md`.
 
-## Why one grammar for three modes
+## Why one grammar for four modes
 
 Earlier design drafts gave each mode its own top-level rule
 (`calc_input -> expression`, `graph_input -> 'y' '=' expression`,
@@ -55,20 +56,21 @@ turned out to need three copies of the same expression grammar. Instead,
 |---------|---------------------------|--------------------------------|
 | `/calc` | `2 + 3 * 4`                | `expr`                         |
 | `/calc` | `x = 10`                   | `expr '=' expr` (LHS is a var) |
-| `/graph`| `y = x^2`                  | `expr '=' expr` (LHS is `y`)   |
-| `/graph`| `3*x = 1`                  | `expr '=' expr` (one other free variable) |
-| `/graph`| `x^2 + y^2 = 25`           | `expr '=' expr` (two free variables) |
+| `/graph2d`| `y = x^2`                  | `expr '=' expr` (LHS is `y`)   |
+| `/graph2d`| `3*x = 1`                  | `expr '=' expr` (one other free variable) |
+| `/graph2d`| `x^2 + y^2 = 25`           | `expr '=' expr` (two free variables) |
+| `/graph3d` | `x^2+y^2+z^2=25` | `expr '=' expr` (up to three free variables) |
 | `/eqn`  | `x^2 - 5*x + 6 = 0`        | `expr '=' expr`                |
 
 Bison parses the SAME statement shape in every mode; `main.c` looks at
 which mode is currently active and dispatches the resulting AST to
-`calc.c`, `graph.c`, or `solver.c` accordingly. Each backend then
+`calc.c`, `graph.c`, `graph3d.c`, or `solver.c` accordingly. Each backend then
 applies its own semantic rule. This keeps the grammar itself small
 while still statically catching real syntax errors (`10 + * 5` is
 invalid in every mode, and Bison rejects it before any mode-specific
 code runs).
 
-### `/graph` accepts more than "y = ..."
+### `/graph2d` accepts more than "y = ..."
 
 `graph.c` looks at the parsed `expr = expr` and counts its distinct
 free variables (via `ast_collect_vars()`, ignoring the constants `pi`
@@ -78,24 +80,28 @@ and `e`) to decide which of three things to do:
 |-------|---------|----------|
 | LHS is literally `y` | `y = x^2` | plot `y` as a curve over the one free variable on the right |
 | exactly one free variable, LHS isn't `y` | `3*x = 1` | solved like `/eqn` (reusing `rootfind.c`) and shown as point(s) on a number line |
-| exactly two free variables | `x^2 + y^2 = 25` | an implicit relation: for each sampled value of one variable, `rootfind_solve()` finds every value of the other that satisfies the equation, so a circle's two branches both get plotted |
-| more than two free variables | `a + b + c = 1` | rejected with a Semantic Error -- nothing to hold fixed |
+| exactly two free variables | `x^2 + y^2 = 25` | an implicit relation: for each sampled value of one variable, `rootfind_solve()` streams each detected value of the other that satisfies the equation, so a circle's two branches both get plotted |
+| more than two free variables | `a + b + c = 1` | rejected with a Semantic Error -- use `/graph3d` |
 
-All 2D plots use a labeled 200x75 dot canvas with a fixed horizontal
+All 2D plots use a labeled 200x75 dot canvas with a default horizontal
 range `[-10, 10]`. The vertical span is the horizontal span multiplied by
 `2 * (height - 1) / (width - 1)`, compensating for terminal characters
 being roughly twice as tall as wide. For this frame the vertical range is
-approximately `[-7.437, 7.437]`. Only the primary axes are drawn; the outer border and background grid
+approximately `[-7.437, 7.437]`. Primary axes use a dot in every terminal cell, and curves also use dense dots; the outer border and background grid
 are omitted. Off-screen points are clipped; undefined
-samples are skipped. Dense sampling improves continuity without connecting
-across domain gaps.
+samples are skipped. The default is 32 samples per terminal column, with
+whole-unit labels on both axes and one-unit steps in coordinate tables.
+Fractional coordinates are sampled between labeled units. Very wide views
+omit labels that cannot fit. Dense sampling improves continuity without
+connecting across domain gaps.
 
 ## Tokens produced by the lexer (`src/lexer.l`)
 
 | Token        | Matches                                  |
 |--------------|-------------------------------------------|
 | `CALC_MODE`  | `/calc`                                    |
-| `GRAPH_MODE` | `/graph`                                   |
+| `GRAPH2D_MODE` | `/graph2d` (legacy alias `/graph`) |
+| `GRAPH3D_MODE` | `/graph3d` |
 | `EQN_MODE`   | `/eqn`                                     |
 | `NUMBER`     | `[0-9]+(\.[0-9]+)?`                        |
 | `IDENTIFIER` | `[a-zA-Z_][a-zA-Z0-9_]*`                    |
@@ -116,9 +122,10 @@ Any other character is rejected by the lexer's catch-all rule with a
 | Semantic checks       | inline in `src/eval.c` (unknown name/function, arity) |
 | IR / Three-Address Code | `src/ir.h/.c` |
 | `/calc` backend       | `src/calc.c`    |
-| `/graph` backend      | `src/graph.c`   |
+| `/graph2d` backend      | `src/graph.c`   |
+| `/graph3d` backend | `src/graph3d.c` |
 | `/eqn` backend        | `src/solver.c`  |
-| Shared root-finder (`/eqn` + implicit `/graph`) | `src/rootfind.c` |
+| Shared root-finder (`/eqn` + implicit `/graph2d`) | `src/rootfind.c` |
 | Target code generation| `src/codegen.c` |
 | Error reporting        | `src/errors.h/.c` |
 | REPL / script driver  | `src/main.c`    |
@@ -129,7 +136,7 @@ The existing `statement -> expr` rule also accepts bare graph expressions.
 A single-variable expression in `y` (such as `y^2`, `y^3`, `pow(y,2)`,
 or `pow(y,3)`) is plotted
 as `x = expr`; an expression in another variable is plotted as `y = expr`.
-Implicit curves include sample coordinate pairs and use the same fixed
+Implicit curves include sample coordinate pairs and use the same configurable
 viewport as explicit function plots.
 
 ### Polynomial equation solving
@@ -138,3 +145,31 @@ viewport as explicit function plots.
 for the selected variable (including `y` or `z`). Degree 1–3 equations
 return real and complex roots with multiplicity. Powers may use `^` or
 `pow`. Other expressions retain the real-root numerical fallback.
+
+### Three-dimensional graphs and plot controls
+
+`GRAPH3D_MODE` enters the 3D rotation prompt. The REPL consumes one of
+`vccw`, `hccw`, `vcw`, or `hcw` before accepting equations; these names are
+commands only in 3D mode and remain ordinary identifiers elsewhere.
+`v` selects coordinate axis y, `h` selects x, and `ccw`/`cw` select positive/negative
+right-handed rotation. The choice persists until changed or the mode is entered
+again. Equations then dispatch to `graph3d_run()` in `src/graph3d.c`. An equation is
+interpreted as `lhs - rhs = 0`; a bare expression in up to two variables
+(excluding `z`) is shorthand for `z = expr`. The backend scans slices along
+all three axes using `rootfind_visit()`, retains every detected branch,
+and renders a point cloud as an ASCII preview and an offline HTML viewer.
+Both views draw x, y, and z reference axes as continuous, densely dotted lines.
+The HTML axes use screen-pixel dot density with larger whole-unit markers.
+Dot density is independent of mathematical unit spacing and preserves the
+existing canvas size and coordinate scale.
+The HTML export carries the selected rotation and animates the point cloud
+and reference axes around the view center using a frame clock. The terminal
+preview remains static.
+Constant polynomial slices that vanish identically contribute a whole sampled
+line. General nonlinear slices use numerical root refinement. No finite scan
+can guarantee every solution of an arbitrary equation.
+
+`/range` and `/samples` are REPL commands handled before expression parsing,
+like `/tac`. `/range` takes four finite, increasing bounds in `/graph2d`, six
+in `/graph3d`; `/samples` takes an integer from 4 to 256. Each graph mode
+retains independent settings. See README.md for defaults and examples.

@@ -9,7 +9,7 @@ ZERO_ROW = (HEIGHT-1)//2
 Y_LIMIT = 20*(HEIGHT-1)/(WIDTH-1)
 
 def plot(expr):
-    script = f'/tac off\n/calc\nx=7\ny=9\n/graph\n{expr}\n/calc\nx+y\n/exit\n'
+    script = f'/tac off\n/calc\nx=7\ny=9\n/graph2d\n{expr}\n/calc\nx+y\n/exit\n'
     output = subprocess.run([str(BIN)], input=script, text=True,
                             capture_output=True, check=True).stdout
     lines = output.splitlines()
@@ -17,11 +17,16 @@ def plot(expr):
     rows = [line[12:] for line in lines[start:start+HEIGHT]]
     assert len(rows) == HEIGHT and all(len(row) == WIDTH for row in rows)
     assert lines[start+HEIGHT].startswith("            -10")
-    assert all(set(row) <= set(" .|+-") for row in rows), "extra border/grid marks"
-    assert all(row[0] in " .-" and row[-1] in " .-" for row in rows), "side border"
+    assert lines[start+HEIGHT][12:].split()[:-1] == [str(n) for n in range(-10,11)]
+    assert [int(line[:12]) for line in lines[start:start+HEIGHT] if line[:12].strip()] == list(range(7,-8,-1))
+    assert 'Sampling: 32 points per column (6369 horizontal positions)' in output
+    assert all(set(row) <= set(" .") for row in rows), "extra border/grid marks"
+    assert all(row[0] in " ." and row[-1] in " ." for row in rows), "side border"
     assert 'calc> 16\n' in output, 'graph changed stored variables'
     assert 'Grid:' not in output and '200 x 75 canvas' in output
-    dots = [(c, r) for r, row in enumerate(rows) for c, char in enumerate(row) if char == '.']
+    # Axes and curves now both use dots. Check geometry away from the axes.
+    dots = [(c, r) for r, row in enumerate(rows) for c, char in enumerate(row)
+            if char == '.' and r != ZERO_ROW and c != WIDTH//2]
     return output, dots
 
 out, dots = plot('x^2+y^2=25')
@@ -61,14 +66,17 @@ for expr in ['pow(y,2)', 'pow(y,3)']:
 out, dots = plot('a^2+z^2=25')
 assert 'Plot (a from -10 to 10, z from -7.43719 to 7.43719)' in out
 # An odd canvas height must put y=0 on the same row as the x-axis.
-out, dots = plot('y = 0')
-assert len(dots) == WIDTH and all(r == ZERO_ROW for c, r in dots)
+out, dots = plot('y = 1')
+assert len(dots) == WIDTH-1 and all(r == round((Y_LIMIT-1)/(2*Y_LIMIT)*(HEIGHT-1)) for c, r in dots)
 out, dots = plot('y = 1000')
 lines = out.splitlines()
 start = next(i for i, line in enumerate(lines) if line.endswith("200 x 75 canvas")) + 1
 axis = lines[start+ZERO_ROW]
 assert axis[:12].strip() == '0'
-assert axis[12:].count('-') == WIDTH-1 and axis[12+WIDTH//2] == '+'
+assert axis[12:]=='.'*WIDTH, 'horizontal axis must be continuous dots'
+assert all(line[12+WIDTH//2]=='.' for line in lines[start:start+HEIGHT]), 'vertical axis must be continuous dots'
+assert sum(line[12:].count('.') for line in lines[start:start+HEIGHT])==WIDTH+HEIGHT-1
+assert all(set(line[12:]) <= {' ','.'} for line in lines[start:start+HEIGHT])
 # The photographed sideways parabola must keep both branches and use
 # significantly more of the height than the old [-20, 20] viewport.
 out, dots = plot('pow(y,2)=4*x+3')
@@ -80,4 +88,20 @@ for c,r in dots:
 out, dots = plot('y=x')
 for c,r in dots:
     assert abs((-10+c*20/(WIDTH-1))-(Y_LIMIT-r*2*Y_LIMIT/(HEIGHT-1))) < .16
-print('13 graph geometry/domain checks passed')
+# More than four branches must survive at both positive and negative y.
+out, dots = plot('(y-1)*(y+1)*(y-2)*(y+2)*(y-3)*(y+3)+0*x=0')
+expected = {round((Y_LIMIT-y)/(2*Y_LIMIT)*(HEIGHT-1)) for y in [-3,-2,-1,1,2,3]}
+assert {r for c,r in dots} == expected
+# Scanning horizontally fills vertical components at off-grid x values.
+out, dots = plot('(x-0.137)*y=0')
+column = round((.137+10)/20*(WIDTH-1))
+assert len({r for c,r in dots if c==column}) == HEIGHT-1
+out, dots = plot('sqrt(x-2)+y=0')
+assert dots and all(c>=round(.6*(WIDTH-1)) for c,r in dots)
+out, dots = plot('1/(y-0.137)+0*x=0')
+assert not dots, 'implicit pole was drawn as a root'
+out, dots = plot('(y-0.137)^4+0*x=0')
+assert dots and all(abs(Y_LIMIT-r*2*Y_LIMIT/(HEIGHT-1)-.137)<.11 for c,r in dots)
+out, dots = plot('y=10000*(x-1)')
+assert len({r for c,r in dots}) == HEIGHT-1, 'steep line has missing rows'
+print('19 graph geometry/domain checks passed')

@@ -46,37 +46,37 @@ Check "calc: unknown function"   @("/calc", "foo(5)", "exit", "/exit")          
 Check "calc: lexical error"      @("/calc", "10 @ 5", "exit", "/exit")             "Lexical Error"
 Check "calc: syntax error"       @("/calc", "10 + * 5", "exit", "/exit")           "Syntax Error"
 
-# /graph
-Check "graph: parabola"          @("/graph", "y = x^2", "exit", "/exit")           "Graph generated."
-Check "graph: needs y ="         @("/graph", "2 + 2", "exit", "/exit")             "Semantic Error"
-Check "graph: implicit mult y=5x" @("/graph", "y=5x", "exit", "/exit")             "t1 = 5 * x"
-Check "graph: bare eqn 3x=1"     @("/graph", "3x=1", "exit", "/exit")              "x = 0.333333"
-Check "graph: two-variable line" @("/graph", "3*x + 2*y = 6", "exit", "/exit")     "implicit relation"
+# /graph2d
+Check "graph: parabola"          @("/graph2d", "y = x^2", "exit", "/exit")           "Graph generated."
+Check "graph: needs y ="         @("/graph2d", "2 + 2", "exit", "/exit")             "Semantic Error"
+Check "graph: implicit mult y=5x" @("/graph2d", "y=5x", "exit", "/exit")             "t1 = 5 * x"
+Check "graph: bare eqn 3x=1"     @("/graph2d", "3x=1", "exit", "/exit")              "x = 0.333333"
+Check "graph: two-variable line" @("/graph2d", "3*x + 2*y = 6", "exit", "/exit")     "implicit relation"
 
 # Sideways curves: verify computed coordinates, including both branches.
-Check "graph: bare y squared lower branch" @("/graph", "y^2", "exit", "/exit") "(4, -2)"
-Check "graph: bare y squared upper branch" @("/graph", "y^2", "exit", "/exit") "(4, 2)"
-Check "graph: bare y cubed negative" @("/graph", "y^3", "exit", "/exit") "(-8, -2)"
-Check "graph: bare y cubed positive" @("/graph", "y^3", "exit", "/exit") "(8, 2)"
-Check "graph: y squared equation" @("/graph", "y^2 = x", "exit", "/exit") "(4, -2)"
-Check "graph: y cubed equation" @("/graph", "y^3 = x", "exit", "/exit") "(-8, -2)"
-Check "graph: reversed cubic equation" @("/graph", "x = y^3", "exit", "/exit") "(8, 2)"
-Check "graph: y on both sides lower branch" @("/graph", "y = y^3 + x", "exit", "/exit") "(0, -1)"
-Check "graph: y on both sides upper branch" @("/graph", "y = y^3 + x", "exit", "/exit") "(0, 1)"
+Check "graph: bare y squared lower branch" @("/graph2d", "y^2", "exit", "/exit") "(4, -2)"
+Check "graph: bare y squared upper branch" @("/graph2d", "y^2", "exit", "/exit") "(4, 2)"
+Check "graph: bare y cubed negative" @("/graph2d", "y^3", "exit", "/exit") "(-8, -2)"
+Check "graph: bare y cubed positive" @("/graph2d", "y^3", "exit", "/exit") "(8, 2)"
+Check "graph: y squared equation" @("/graph2d", "y^2 = x", "exit", "/exit") "(4, -2)"
+Check "graph: y cubed equation" @("/graph2d", "y^3 = x", "exit", "/exit") "(-8, -2)"
+Check "graph: reversed cubic equation" @("/graph2d", "x = y^3", "exit", "/exit") "(8, 2)"
+Check "graph: y on both sides lower branch" @("/graph2d", "y = y^3 + x", "exit", "/exit") "(0, -1)"
+Check "graph: y on both sides upper branch" @("/graph2d", "y = y^3 + x", "exit", "/exit") "(0, 1)"
 
 # Function-call power syntax must retain both branches and negative roots.
-Check "graph: pow square lower branch" @("/graph", "pow(y,2)", "exit", "/exit") "(4, -2)"
-Check "graph: pow square upper branch" @("/graph", "pow(y,2)", "exit", "/exit") "(4, 2)"
-Check "graph: pow cube negative" @("/graph", "pow(y,3)", "exit", "/exit") "(-8, -2)"
-Check "graph: pow cube positive" @("/graph", "pow(y,3)", "exit", "/exit") "(8, 2)"
-Check "graph: pow square equation" @("/graph", "pow(y,2) = x", "exit", "/exit") "(4, -2)"
-Check "graph: pow cube equation" @("/graph", "pow(y,3) = x", "exit", "/exit") "(-8, -2)"
-Check "graph: pow reversed square" @("/graph", "x = pow(y,2)", "exit", "/exit") "(4, 2)"
-Check "graph: pow reversed cube" @("/graph", "x = pow(y,3)", "exit", "/exit") "(8, 2)"
+Check "graph: pow square lower branch" @("/graph2d", "pow(y,2)", "exit", "/exit") "(4, -2)"
+Check "graph: pow square upper branch" @("/graph2d", "pow(y,2)", "exit", "/exit") "(4, 2)"
+Check "graph: pow cube negative" @("/graph2d", "pow(y,3)", "exit", "/exit") "(-8, -2)"
+Check "graph: pow cube positive" @("/graph2d", "pow(y,3)", "exit", "/exit") "(8, 2)"
+Check "graph: pow square equation" @("/graph2d", "pow(y,2) = x", "exit", "/exit") "(4, -2)"
+Check "graph: pow cube equation" @("/graph2d", "pow(y,3) = x", "exit", "/exit") "(-8, -2)"
+Check "graph: pow reversed square" @("/graph2d", "x = pow(y,2)", "exit", "/exit") "(4, 2)"
+Check "graph: pow reversed cube" @("/graph2d", "x = pow(y,3)", "exit", "/exit") "(8, 2)"
 
 # Check actual canvas dimensions and markers, excluding labels and indentation.
 function Check-Grid($expr) {
-    Set-Content -Path $tmp -Value @("/tac off", "/graph", $expr, "/exit") -Encoding ASCII
+    Set-Content -Path $tmp -Value @("/tac off", "/graph2d", $expr, "/exit") -Encoding ASCII
     $lines = @(& $Bin $tmp)
     $start = -1
     for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -86,7 +86,7 @@ function Check-Grid($expr) {
     $dots = $false
     if ($valid) {
         for ($i = $start; $i -lt ($start + 75); $i++) {
-            if ($lines[$i] -notmatch '^.{12}[ .|+\-]{200}$') { $valid = $false }
+            if ($lines[$i] -notmatch '^.{12}[ .*]{200}$') { $valid = $false }
             if ($lines[$i].Contains('.')) { $dots = $true }
         }
         if ($lines[$start + 75] -notmatch '^            -10') { $valid = $false }

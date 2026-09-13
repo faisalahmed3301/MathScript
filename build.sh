@@ -36,7 +36,7 @@ echo "== Step 3/3: $CC (compile + link) =="
     build/lex.yy.c \
     build/parser.tab.c \
     src/main.c src/ast.c src/symtab.c src/errors.c src/eval.c \
-    src/ir.c src/util.c src/calc.c src/graph.c src/solver.c src/poly.c src/rootfind.c src/codegen.c \
+    src/ir.c src/util.c src/calc.c src/graph.c src/graph3d.c src/solver.c src/poly.c src/rootfind.c src/codegen.c \
     -o build/mathscript -lm
 
 echo

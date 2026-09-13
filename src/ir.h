@@ -33,7 +33,7 @@ const char *tac_build(TACProgram *p, ASTNode *n);
    architecture design (see docs/GRAMMAR.md, section "IR / TAC"). */
 void tac_finish_calc(TACProgram *p, const char *operand);                 /* RESULT = operand           */
 void tac_finish_assign(TACProgram *p, const char *var, const char *val);  /* var = val                   */
-void tac_finish_graph(TACProgram *p, const char *operand, const char *var_name); /* RETURN operand; PLOT var ... */
+void tac_finish_graph(TACProgram *p, const char *operand, const char *var_name, double lo, double hi); /* RETURN operand; PLOT var ... */
 void tac_finish_eqn(TACProgram *p, const char *operand);                  /* EQUATION operand = 0; SOLVE*/
 
 #endif

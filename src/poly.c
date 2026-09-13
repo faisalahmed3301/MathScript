@@ -18,19 +18,19 @@ static int multiply(Polynomial a, Polynomial b, Polynomial *out) {
     return 1;
 }
 
-int poly_extract(ASTNode *n, const char *variable, Polynomial *out) {
+static int extract(ASTNode *n, const char *variable, Polynomial *out, int bound) {
     *out = (Polynomial){{0}};
     if (n->kind == N_NUM) { out->c[0] = n->num; return isfinite(n->num); }
     if (n->kind == N_VAR) {
         if (!strcmp(n->name, variable)) { out->c[1] = 1; return 1; }
         double v;
-        if (!symtab_is_constant(n->name) || !symtab_lookup(n->name, &v)) return 0;
+        if ((!bound && !symtab_is_constant(n->name)) || !symtab_lookup(n->name, &v)) return 0;
         out->c[0] = v;
         return isfinite(v);
     }
     Polynomial a, b;
     if (n->kind == N_UMINUS) {
-        if (!poly_extract(n->left, variable, out)) return 0;
+        if (!extract(n->left, variable, out, bound)) return 0;
         for (int i = 0; i < 4; i++) out->c[i] = -out->c[i];
         return 1;
     }
@@ -39,14 +39,14 @@ int poly_extract(ASTNode *n, const char *variable, Polynomial *out) {
         /* Constant function calls such as sqrt(4) may be coefficients. */
         char names[8][64]; int count = 0;
         ast_collect_vars(n, names, 8, &count);
-        for (int i = 0; i < count; i++) if (!symtab_is_constant(names[i])) return 0;
+        for (int i = 0; i < count; i++) if (!strcmp(names[i], variable) || (!bound && !symtab_is_constant(names[i]))) return 0;
         int ok = 1;
         out->c[0] = eval(n, 1, &ok);
         return ok && isfinite(out->c[0]);
     }
     if (n->kind != N_BINOP && !power_call) return 0;
-    if (!poly_extract(power_call ? n->args[0] : n->left, variable, &a) ||
-        !poly_extract(power_call ? n->args[1] : n->right, variable, &b)) return 0;
+    if (!extract(power_call ? n->args[0] : n->left, variable, &a, bound) ||
+        !extract(power_call ? n->args[1] : n->right, variable, &b, bound)) return 0;
     int op = power_call ? '^' : n->op;
     switch (op) {
         case '+': case '-':
@@ -116,4 +116,12 @@ int poly_solve(const Polynomial *p, PolyRoot roots[3]) {
             PolyRoot tmp=roots[i]; roots[i]=roots[j]; roots[j]=tmp;
         }
     return d;
+}
+
+int poly_extract(ASTNode *n, const char *variable, Polynomial *out) {
+    return extract(n, variable, out, 0);
+}
+
+int poly_extract_slice(ASTNode *n, const char *variable, Polynomial *out) {
+    return extract(n, variable, out, 1);
 }

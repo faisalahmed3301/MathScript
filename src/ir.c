@@ -108,9 +108,9 @@ void tac_finish_assign(TACProgram *p, const char *var, const char *val) {
     emit(p, "%s = %s", var, val);
 }
 
-void tac_finish_graph(TACProgram *p, const char *operand, const char *var_name) {
+void tac_finish_graph(TACProgram *p, const char *operand, const char *var_name, double lo, double hi) {
     emit(p, "RETURN %s", operand);
-    emit(p, "PLOT %s FROM -10 TO 10", var_name);
+    emit(p, "PLOT %s FROM %g TO %g", var_name, lo, hi);
 }
 
 void tac_finish_eqn(TACProgram *p, const char *operand) {

@@ -28,7 +28,9 @@ ID      [a-zA-Z_][a-zA-Z0-9_]*
 [ \t]+                 { /* skip whitespace */ }
 
 "/calc"                 { return CALC_MODE; }
-"/graph"                { return GRAPH_MODE; }
+"/graph2d"              { return GRAPH2D_MODE; }
+"/graph3d"              { return GRAPH3D_MODE; }
+"/graph"                { return GRAPH2D_MODE; }
 "/eqn"                  { return EQN_MODE; }
 
 {NUMBER}                { yylval.dval = atof(yytext); return NUMBER; }

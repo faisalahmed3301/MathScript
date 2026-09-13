@@ -43,43 +43,43 @@ check "calc: unknown function"    "/calc\nfoo(5)\nexit\n/exit\n"                
 check "calc: lexical error"       "/calc\n10 @ 5\nexit\n/exit\n"                  "Lexical Error"
 check "calc: syntax error"        "/calc\n10 + * 5\nexit\n/exit\n"                "Syntax Error"
 
-# /graph
-check "graph: parabola"           "/graph\ny = x^2\nexit\n/exit\n"                "Graph generated."
-check "graph: needs y ="          "/graph\n2 + 2\nexit\n/exit\n"                  "Semantic Error"
-check "graph: implicit mult y=5x" "/graph\ny=5x\nexit\n/exit\n"                   "t1 = 5 * x"
-check "graph: bare eqn 3x=1"      "/graph\n3x=1\nexit\n/exit\n"                  "x = 0.333333"
-check "graph: two-variable line"  "/graph\n3*x + 2*y = 6\nexit\n/exit\n"          "implicit relation"
+# /graph2d
+check "graph: parabola"           "/graph2d\ny = x^2\nexit\n/exit\n"                "Graph generated."
+check "graph: needs y ="          "/graph2d\n2 + 2\nexit\n/exit\n"                  "Semantic Error"
+check "graph: implicit mult y=5x" "/graph2d\ny=5x\nexit\n/exit\n"                   "t1 = 5 * x"
+check "graph: bare eqn 3x=1"      "/graph2d\n3x=1\nexit\n/exit\n"                  "x = 0.333333"
+check "graph: two-variable line"  "/graph2d\n3*x + 2*y = 6\nexit\n/exit\n"          "implicit relation"
 
 # Sideways curves: verify computed coordinates, including both branches.
-check "graph: bare y squared lower branch" "/graph\ny^2\nexit\n/exit\n" "(4, -2)"
-check "graph: bare y squared upper branch" "/graph\ny^2\nexit\n/exit\n" "(4, 2)"
-check "graph: bare y cubed negative" "/graph\ny^3\nexit\n/exit\n" "(-8, -2)"
-check "graph: bare y cubed positive" "/graph\ny^3\nexit\n/exit\n" "(8, 2)"
-check "graph: y squared equation" "/graph\ny^2 = x\nexit\n/exit\n" "(4, -2)"
-check "graph: y cubed equation" "/graph\ny^3 = x\nexit\n/exit\n" "(-8, -2)"
-check "graph: reversed cubic equation" "/graph\nx = y^3\nexit\n/exit\n" "(8, 2)"
-check "graph: y on both sides lower branch" "/graph\ny = y^3 + x\nexit\n/exit\n" "(0, -1)"
-check "graph: y on both sides upper branch" "/graph\ny = y^3 + x\nexit\n/exit\n" "(0, 1)"
+check "graph: bare y squared lower branch" "/graph2d\ny^2\nexit\n/exit\n" "(4, -2)"
+check "graph: bare y squared upper branch" "/graph2d\ny^2\nexit\n/exit\n" "(4, 2)"
+check "graph: bare y cubed negative" "/graph2d\ny^3\nexit\n/exit\n" "(-8, -2)"
+check "graph: bare y cubed positive" "/graph2d\ny^3\nexit\n/exit\n" "(8, 2)"
+check "graph: y squared equation" "/graph2d\ny^2 = x\nexit\n/exit\n" "(4, -2)"
+check "graph: y cubed equation" "/graph2d\ny^3 = x\nexit\n/exit\n" "(-8, -2)"
+check "graph: reversed cubic equation" "/graph2d\nx = y^3\nexit\n/exit\n" "(8, 2)"
+check "graph: y on both sides lower branch" "/graph2d\ny = y^3 + x\nexit\n/exit\n" "(0, -1)"
+check "graph: y on both sides upper branch" "/graph2d\ny = y^3 + x\nexit\n/exit\n" "(0, 1)"
 
 # Function-call power syntax must retain both branches and negative roots.
-check "graph: pow square lower branch" "/graph\npow(y,2)\nexit\n/exit\n" "(4, -2)"
-check "graph: pow square upper branch" "/graph\npow(y,2)\nexit\n/exit\n" "(4, 2)"
-check "graph: pow cube negative" "/graph\npow(y,3)\nexit\n/exit\n" "(-8, -2)"
-check "graph: pow cube positive" "/graph\npow(y,3)\nexit\n/exit\n" "(8, 2)"
-check "graph: pow square equation" "/graph\npow(y,2) = x\nexit\n/exit\n" "(4, -2)"
-check "graph: pow cube equation" "/graph\npow(y,3) = x\nexit\n/exit\n" "(-8, -2)"
-check "graph: pow reversed square" "/graph\nx = pow(y,2)\nexit\n/exit\n" "(4, 2)"
-check "graph: pow reversed cube" "/graph\nx = pow(y,3)\nexit\n/exit\n" "(8, 2)"
+check "graph: pow square lower branch" "/graph2d\npow(y,2)\nexit\n/exit\n" "(4, -2)"
+check "graph: pow square upper branch" "/graph2d\npow(y,2)\nexit\n/exit\n" "(4, 2)"
+check "graph: pow cube negative" "/graph2d\npow(y,3)\nexit\n/exit\n" "(-8, -2)"
+check "graph: pow cube positive" "/graph2d\npow(y,3)\nexit\n/exit\n" "(8, 2)"
+check "graph: pow square equation" "/graph2d\npow(y,2) = x\nexit\n/exit\n" "(4, -2)"
+check "graph: pow cube equation" "/graph2d\npow(y,3) = x\nexit\n/exit\n" "(-8, -2)"
+check "graph: pow reversed square" "/graph2d\nx = pow(y,2)\nexit\n/exit\n" "(4, 2)"
+check "graph: pow reversed cube" "/graph2d\nx = pow(y,3)\nexit\n/exit\n" "(8, 2)"
 
 # Check actual canvas dimensions and markers, excluding labels and indentation.
 check_grid() {
     local expr="$1" out
-    out=$(printf '/tac off\n/graph\n%s\n/exit\n' "$expr" | "$BIN" 2>&1)
+    out=$(printf '/tac off\n/graph2d\n%s\n/exit\n' "$expr" | "$BIN" 2>&1)
     if printf '%s\n' "$out" | awk '
         /200 x 75 canvas$/ && !started { plotting = 1; started = 1; next }
         plotting && rows < 75 {
             row = substr($0, 13, 200)
-            if (length($0) != 212 || row ~ /[^ .|+\-]/) bad = 1
+            if (length($0) != 212 || row ~ /[^ .*]/) bad = 1
             if (index(row, ".")) dots = 1
             rows++; next
         }

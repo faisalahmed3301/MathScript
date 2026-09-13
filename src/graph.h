@@ -1,20 +1,16 @@
 #ifndef GRAPH_H
 #define GRAPH_H
-
 #include "ast.h"
-
-/* Runs one parsed /graph statement (any "expr = expr"). Handles
- * three shapes, dispatched by how many free variables appear:
- *   y = f(x)          -- the common case: a curve, y vs. one variable
- *   f(x) = c            (1 free var, no 'y')  -- solved and shown as
- *                        point(s) on a number line
- *   f(x, y) = g(x, y)    (2 free vars)  -- an implicit relation (e.g.
- *                        a line or circle), solved for the second
- *                        variable at each sampled value of the first
- * Renders ASCII art in the terminal (portable, no GUI dependency),
- * which matches the "X-axis, Y-axis, grid, curve" requirement from
- * the language design without needing a graphics library on either
- * Windows or macOS. */
+typedef struct { double lo[3], hi[3]; int samples; } GraphSettings;
+extern GraphSettings graph2d_settings, graph3d_settings;
+/* /range and /samples update only the active graph mode. */
+int graph_command(const char *line, int dimensions);
 void graph_run(ASTNode *stmt, int show_tac);
-
+void graph3d_begin(void);
+int graph3d_needs_rotation(void);
+int graph3d_rotation_command(const char *line);
+void graph3d_run(ASTNode *stmt, int show_tac);
+/* Three coordinate subdivisions per unit, coalesced at display resolution. */
+int graph_axis_marks(double lo,double hi,int capacity,double *values);
+int graph_free_vars(ASTNode *lhs, ASTNode *rhs, char names[][64]);
 #endif

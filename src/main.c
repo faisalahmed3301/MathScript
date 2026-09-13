@@ -34,8 +34,9 @@ extern void yy_delete_buffer(YY_BUFFER_STATE buffer);
 
 #define MODE_NONE  0
 #define MODE_CALC  1
-#define MODE_GRAPH 2
+#define MODE_GRAPH2D 2
 #define MODE_EQN   3
+#define MODE_GRAPH3D 4
 
 static int  g_mode = MODE_NONE;
 static int  g_show_tac = 1;
@@ -43,7 +44,7 @@ static int  g_show_tac = 1;
 static const char *GRAMMAR_TEXT =
 "MathScript grammar (BNF) -- this is the ACTUAL grammar parser.y hands to Bison.\n"
 "\n"
-"  input       -> CALC_MODE | GRAPH_MODE | EQN_MODE\n"
+"  input       -> CALC_MODE | GRAPH2D_MODE | GRAPH3D_MODE | EQN_MODE\n"
 "               |  statement\n"
 "\n"
 "  statement   -> expr\n"
@@ -65,13 +66,14 @@ static const char *GRAMMAR_TEXT =
 "\n"
 "  arglist     -> (empty) | expr | arglist ',' expr\n"
 "\n"
-"The SAME grammar is used for /calc, /graph and /eqn. The active\n"
+"The SAME grammar is used for /calc, /graph2d, /graph3d and /eqn. The active\n"
 "mode only changes how main.c interprets an already-parsed\n"
-"statement (see calc.c, graph.c, solver.c). /graph in particular\n"
+"statement (see calc.c, graph.c, solver.c). /graph2d in particular\n"
 "accepts any 'expr = expr': \"y = f(x)\" plots a curve, an equation\n"
 "in one other variable (e.g. \"3*x = 1\") is solved and shown on a\n"
 "number line, and an equation in two variables (e.g. \"x^2+y^2=25\")\n"
-"is plotted as an implicit curve. See src/parser.y.\n";
+"is plotted as an implicit curve. /graph3d plots equations in up to\n"
+"three variables as sampled surfaces. See src/parser.y.\n";
 
 static const char *PRECEDENCE_TEXT =
 "Operator precedence (as declared in parser.y), LOWEST to HIGHEST:\n"
@@ -104,7 +106,10 @@ static const char *PRECEDENCE_TEXT =
 static const char *HELP_TEXT =
 "MathScript commands:\n"
 "  /calc            enter calculation mode\n"
-"  /graph           enter graph mode\n"
+"  /graph2d         enter 2D graph mode (/graph is a compatibility alias)\n"
+"  /graph3d         enter 3D surface graph mode\n"
+"  /range xmin xmax ymin ymax [zmin zmax]  set active graph bounds\n"
+"  /samples N       2D: 4-256 (default 32); 3D: 4-512 (default 192)\n"
 "  /eqn             solve in x, y, z, etc.; degree 1-3 includes complex roots\n"
 "  /help            show this help\n"
 "  /grammar         print the MathScript grammar (BNF)\n"
@@ -119,18 +124,27 @@ static const char *HELP_TEXT =
 "                     equivalent C code, to demonstrate code generation\n"
 "  exit               leave the current mode\n"
 "\n"
-"/graph accepts more than just \"y = ...\":\n"
+"/graph2d accepts more than just \"y = ...\":\n"
 "  y = x^2            a curve: y as a function of one variable\n"
 "  y^2 or y^3         a sideways curve: shorthand for x = f(y)\n"
 "  pow(y,2), pow(y,3) equivalent power-function syntax\n"
 "  y^2 = x            an implicit curve with both real branches\n"
 "  3*x = 1  (or 3x=1) an equation in one variable -> solved, shown on a number line\n"
-"  x^2 + y^2 = 25     an equation in two variables -> plotted as an implicit curve\n";
+"  x^2 + y^2 = 25     an equation in two variables -> plotted as an implicit curve\n"
+"/graph3d asks for rotation first (these commands work only in 3D):\n"
+"  vccw / vcw          y-axis counterclockwise / clockwise\n"
+"  hccw / hcw          x-axis counterclockwise / clockwise\n"
+"  Then enter an explicit or implicit equation:\n"
+"  z = sin(x) + cos(y)   a height surface (or just sin(x)+cos(y))\n"
+"  x^2+y^2+z^2 = 25     a sphere with all detected branches\n"
+"  x^2+y^2 = 9          a cylinder extending along z\n"
+"  Generates a static terminal preview and an automatically rotating HTML graph.\n";
 
 static const char *mode_prompt(void) {
     switch (g_mode) {
         case MODE_CALC:  return "calc> ";
-        case MODE_GRAPH: return "graph> ";
+        case MODE_GRAPH2D: return "graph2d> ";
+        case MODE_GRAPH3D: return graph3d_needs_rotation()?"rotation> ":"graph3d> ";
         case MODE_EQN:   return "eqn> ";
         default:         return "> ";
     }
@@ -172,11 +186,22 @@ static void process_line(char *line) {
         if (g_mode == MODE_NONE) {
             printf("Not inside a mode. Use /exit to quit MathScript.\n");
         } else {
-            const char *name = g_mode == MODE_CALC ? "CALC" : g_mode == MODE_GRAPH ? "GRAPH" : "EQN";
+            const char *name = g_mode == MODE_CALC ? "CALC" : g_mode == MODE_GRAPH2D ? "GRAPH2D" : g_mode == MODE_GRAPH3D ? "GRAPH3D" : "EQN";
             printf("[Leaving %s mode]\n", name);
             g_mode = MODE_NONE;
         }
         return;
+    }
+
+    if ((g_mode == MODE_GRAPH2D || g_mode == MODE_GRAPH3D) &&
+        graph_command(line, g_mode == MODE_GRAPH3D ? 3 : 2)) return;
+
+    if (g_mode == MODE_GRAPH3D) {
+        if (graph3d_rotation_command(line)) return;
+        if (graph3d_needs_rotation() && line[0] != '/') {
+            printf("Choose a rotation first: vccw, hccw, vcw, or hcw. Then enter the equation.\n");
+            return;
+        }
     }
 
     int also_codegen = 0;
@@ -187,10 +212,11 @@ static void process_line(char *line) {
     }
 
     if (!parse_line(line)) {
-        if (g_mode_switch) {
+        if (g_mode_switch && !errors_any()) {
             g_mode = g_mode_switch;
-            const char *name = g_mode == MODE_CALC ? "CALC" : g_mode == MODE_GRAPH ? "GRAPH" : "EQN";
+            const char *name = g_mode == MODE_CALC ? "CALC" : g_mode == MODE_GRAPH2D ? "GRAPH2D" : g_mode == MODE_GRAPH3D ? "GRAPH3D" : "EQN";
             printf("[%s mode activated]\n", name);
+            if (g_mode == MODE_GRAPH3D) graph3d_begin();
         }
         /* else: lexical/syntax error already reported by errors.c */
         return;
@@ -206,7 +232,7 @@ static void process_line(char *line) {
     }
 
     if (g_mode == MODE_NONE) {
-        printf("No mode active. Type /calc, /graph, or /eqn first.\n");
+        printf("No mode active. Type /calc, /graph2d, /graph3d, or /eqn first.\n");
         ast_free(g_parse_result);
         return;
     }
@@ -216,8 +242,11 @@ static void process_line(char *line) {
             calc_run(g_parse_result, g_show_tac);
             if (also_codegen && !errors_any()) codegen_run(g_parse_result);
             break;
-        case MODE_GRAPH:
+        case MODE_GRAPH2D:
             graph_run(g_parse_result, g_show_tac);
+            break;
+        case MODE_GRAPH3D:
+            graph3d_run(g_parse_result, g_show_tac);
             break;
         case MODE_EQN:
             solver_run(g_parse_result, g_show_tac);
@@ -230,7 +259,7 @@ static void print_banner(void) {
     printf("========================================\n");
     printf("           MathScript Compiler\n");
     printf("========================================\n\n");
-    printf("Commands:\n  /calc\n  /graph\n  /eqn\n  /help\n  /exit\n\n");
+    printf("Commands:\n  /calc\n  /graph2d\n  /graph3d\n  /eqn\n  /help\n  /exit\n\n");
 }
 
 int main(int argc, char **argv) {

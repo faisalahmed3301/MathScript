@@ -103,3 +103,26 @@ double eval(ASTNode *n, int quiet, int *ok) {
     *ok = 0;
     return 0;
 }
+
+/* Validate structure independently of any sample's real-valued domain. */
+int eval_validate(ASTNode *n) {
+    if (!n) return 1;
+    if (n->kind == N_VAR) {
+        double value;
+        if (!symtab_lookup(n->name, &value)) {
+            semantic_error("Undefined variable '%s'", n->name);
+            return 0;
+        }
+    }
+    if (n->kind == N_CALL) {
+        int arity = !strcmp(n->name,"pow") ? 2 :
+            (!strcmp(n->name,"sqrt") || !strcmp(n->name,"abs") ||
+             !strcmp(n->name,"sin") || !strcmp(n->name,"cos") ||
+             !strcmp(n->name,"tan") || !strcmp(n->name,"log")) ? 1 : 0;
+        if (!arity) { semantic_error("Unknown function '%s'",n->name); return 0; }
+        if (arity != n->argc) { semantic_error("'%s' expects %d argument%s, got %d",n->name,arity,arity==1?"":"s",n->argc); return 0; }
+    }
+    if (!eval_validate(n->left) || !eval_validate(n->right)) return 0;
+    for (int i=0;i<n->argc;i++) if (!eval_validate(n->args[i])) return 0;
+    return 1;
+}

@@ -1,8 +1,8 @@
-# MathScript example script -- /graph mode
+# MathScript example script -- /graph2d mode
 # Run with:  build/mathscript examples/graph_examples.ms   (macOS/Linux)
 #            build\mathscript.exe examples\graph_examples.ms  (Windows)
 
-/graph
+/graph2d
 
 y = x^2
 y = 2*x + 3

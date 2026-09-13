@@ -1,9 +1,10 @@
 /* ============================================================
    parser.y -- MathScript grammar (Bison)
 
+
    This is the WHOLE language grammar. It is intentionally tiny:
 
-       input      -> CALC_MODE | GRAPH_MODE | EQN_MODE
+       input      -> CALC_MODE | GRAPH2D_MODE | GRAPH3D_MODE | EQN_MODE
                    |  statement
 
        statement  -> expr
@@ -23,7 +24,7 @@
                    |  NUMBER IDENTIFIER              (implicit multiply: "3x")
                    |  NUMBER '(' expr ')'            (implicit multiply: "3(x+1)")
 
-   The SAME grammar parses /calc, /graph and /eqn input -- the
+   The SAME grammar parses /calc, /graph2d, /graph3d and /eqn input -- the
    REPL (main.c) decides what a parsed line MEANS once it knows
    which mode is currently active. See docs/GRAMMAR.md and the
    /grammar command for the exact BNF, and docs/OPERATOR_PRECEDENCE.md
@@ -41,7 +42,7 @@ extern int yylex(void);
 extern int yylineno;
 
 ASTNode *g_parse_result = NULL;   /* AST of a parsed statement       */
-int      g_mode_switch  = 0;     /* 1=calc 2=graph 3=eqn, 0=none    */
+int      g_mode_switch  = 0;     /* 1=calc 2=graph2d 3=eqn 4=graph3d, 0=none    */
 
 void yyerror(const char *msg) {
     if (!g_lex_error)             /* lexer already explained the problem */
@@ -60,7 +61,7 @@ void yyerror(const char *msg) {
 
 %token <dval> NUMBER
 %token <sval> IDENTIFIER
-%token CALC_MODE GRAPH_MODE EQN_MODE
+%token CALC_MODE GRAPH2D_MODE GRAPH3D_MODE EQN_MODE
 %token GE LE EQ NE
 
 %type <node> expr statement
@@ -78,7 +79,8 @@ void yyerror(const char *msg) {
 
 input
     : CALC_MODE          { g_mode_switch = 1; }
-    | GRAPH_MODE         { g_mode_switch = 2; }
+    | GRAPH2D_MODE         { g_mode_switch = 2; }
+    | GRAPH3D_MODE         { g_mode_switch = 4; }
     | EQN_MODE           { g_mode_switch = 3; }
     | statement          { g_parse_result = $1; }
     ;
