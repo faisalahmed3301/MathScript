@@ -45,7 +45,6 @@ function draw() {
   for (const c of [canvas, surface]) if (c.width !== width || c.height !== height) { c.width = width; c.height = height; }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h);
   const s = Math.min(w, h) * .72 * zoom, origin = [w * .48, h * .47], xy = p => [origin[0] + p[0] * s, origin[1] - p[1] * s];
-  const s = Math.min(w, h) * .72 * zoom, origin = [w * .5, h * .5], xy = p => [origin[0] + p[0] * s, origin[1] - p[1] * s];
   const isLight = document.documentElement.dataset.theme === 'light';
   // The same orthographic camera drives the GPU surface and the overlay.
   if (gl) {
@@ -129,7 +128,7 @@ new ResizeObserver(schedule).observe($('viewport'));
     document.documentElement.dataset.theme = theme;
     if (btn) {
       btn.title = theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
-      btn.setAttribute('aria-checked', String(theme === 'dark'));
+      btn.checked = theme === 'light';
     }
     localStorage.setItem('mathscript-theme', theme);
     schedule();

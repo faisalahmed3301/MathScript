@@ -58,7 +58,7 @@ canvas.onkeydown = e => { if (e.key === '+' || e.key === '=') zoom(.8); else if 
 $('grid').onchange = $('axes').onchange = schedule; $('width').oninput = () => { $('width-value').value = $('width').value + ' px'; schedule(); }; $('detail').onchange = resample;
 $('fullscreen').onclick = async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await $('workspace').requestFullscreen(); } catch (error) { $('status-message').textContent = 'Fullscreen is unavailable in this browser.'; } };
 document.addEventListener('fullscreenchange', () => { $('fullscreen').setAttribute('aria-pressed', String(!!document.fullscreenElement)); $('fullscreen').querySelector('span').textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen'; schedule(); });
-$('reload').onclick = () => location.reload(); new ResizeObserver(schedule).observe($('viewport')); window.addEventListener('resize', schedule); window.addEventListener('pagehide', () => { clearTimeout(timer); cleanup(); }); setFields(); schedule(); resample();
+if($('reload')) $('reload').onclick = () => location.reload(); new ResizeObserver(schedule).observe($('viewport')); window.addEventListener('resize', schedule); window.addEventListener('pagehide', () => { clearTimeout(timer); cleanup(); }); setFields(); schedule(); resample();
 
 // ── Theme toggle ──────────────────────────────────────────────────────────
 (function initTheme() {
@@ -69,7 +69,7 @@ $('reload').onclick = () => location.reload(); new ResizeObserver(schedule).obse
     document.documentElement.dataset.theme = theme;
     if (btn) {
       btn.title = theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
-      btn.setAttribute('aria-checked', String(theme === 'dark'));
+      btn.checked = theme === 'light';
     }
     localStorage.setItem('mathscript-theme', theme);
     schedule();
