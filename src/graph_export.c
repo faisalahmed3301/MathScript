@@ -160,14 +160,18 @@ int graph_export_view(int dimensions, ASTNode *lhs, ASTNode *rhs, char names[][6
 
     /* Create the archive file (unique name) */
     static unsigned serial = 0;
+    char graph_id[128];
     char archive[256];
     FILE *fp = NULL;
     for (int attempt = 0; attempt < 1000; attempt++)
     {
-        snprintf(archive, sizeof(archive),
-                 "%s/graph%dd_%lld_%ld_%04u.html",
-                 archive_folder, dimensions,
+        snprintf(graph_id, sizeof(graph_id),
+                 "graph%dd_%lld_%ld_%04u",
+                 dimensions,
                  (long long)time(NULL), (long)process_id(), ++serial);
+        snprintf(archive, sizeof(archive),
+                 "%s/%s.html",
+                 archive_folder, graph_id);
         fp = fopen(archive, "wx");
         if (fp || errno != EEXIST)
             break;
@@ -186,6 +190,7 @@ int graph_export_view(int dimensions, ASTNode *lhs, ASTNode *rhs, char names[][6
             settings->hi[0], settings->hi[1], settings->hi[2]);
     fprintf(fp, "const graphKind='%s',requestedDetail=%d;\n", kind, settings->samples);
     fprintf(fp, "const rotation={axis:'%s',direction:%d};\n", rotation_axis, rotation_direction);
+    fprintf(fp, "const liveVersion='%s';\n", graph_id);
     fputs("const model={lhs:", fp);
     write_model(fp, lhs, names);
     fputs(",rhs:", fp);
@@ -210,6 +215,41 @@ int graph_export_view(int dimensions, ASTNode *lhs, ASTNode *rhs, char names[][6
     {
         fprintf(stderr, "Archive saved, but live graph could not be updated: %s\n", archive);
         return 0;
+    }
+
+    /* Update live watcher files so open browsers auto-refresh */
+    char ping_file[256], json_file[256], js_file[256];
+    snprintf(ping_file, sizeof(ping_file), "%s/live_ping.html", LIVE_FOLDER);
+    snprintf(json_file, sizeof(json_file), "%s/live_version.json", LIVE_FOLDER);
+    snprintf(js_file, sizeof(js_file), "%s/live_version.js", LIVE_FOLDER);
+
+    FILE *ping_fp = fopen(ping_file, "w");
+    if (ping_fp)
+    {
+        fprintf(ping_fp,
+                "<!doctype html><html><head><meta charset=\"utf-8\"><title>Live Watcher</title></head><body>"
+                "<script>\n"
+                "var v=\"%s\";\n"
+                "try{if(window.parent&&window.parent!==window){window.parent.postMessage({mathscript_live:v},\"*\");}}catch(e){}\n"
+                "setTimeout(function(){location.reload();},600);\n"
+                "</script></body></html>\n",
+                graph_id);
+        fclose(ping_fp);
+    }
+
+    FILE *json_fp = fopen(json_file, "w");
+    if (json_fp)
+    {
+        fprintf(json_fp, "{\"version\":\"%s\",\"timestamp\":%lld}\n",
+                graph_id, (long long)time(NULL));
+        fclose(json_fp);
+    }
+
+    FILE *js_fp = fopen(js_file, "w");
+    if (js_fp)
+    {
+        fprintf(js_fp, "window.__MATHSCRIPT_LIVE_VERSION__=\"%s\";\n", graph_id);
+        fclose(js_fp);
     }
 
     printf("Live graph:     %s\nArchived graph: %s\n", LIVE_FILE, archive);

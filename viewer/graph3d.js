@@ -45,6 +45,7 @@ function draw() {
   for (const c of [canvas, surface]) if (c.width !== width || c.height !== height) { c.width = width; c.height = height; }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h);
   const s = Math.min(w, h) * .72 * zoom, origin = [w * .48, h * .47], xy = p => [origin[0] + p[0] * s, origin[1] - p[1] * s];
+  const s = Math.min(w, h) * .72 * zoom, origin = [w * .5, h * .5], xy = p => [origin[0] + p[0] * s, origin[1] - p[1] * s];
   const isLight = document.documentElement.dataset.theme === 'light';
   // The same orthographic camera drives the GPU surface and the overlay.
   if (gl) {
@@ -205,4 +206,143 @@ surface.addEventListener('webglcontextlost', e => { e.preventDefault(); gl = nul
     window.addEventListener('pointercancel', onPointerUp);
   });
   resizer.addEventListener('dblclick', () => { eq.style.height = 'auto'; });
+})();
+
+// ── Sidebar collapse / slide toggle ──────────────────────────────────────
+(function initSidebar() {
+  const app = $('app') || document.querySelector('.app');
+  if (!app) return;
+  const toggleBtn = $('sidebar-toggle');
+  const closeBtn = $('sidebar-close');
+  const edgeBtn = $('sidebar-edge-toggle');
+
+  // Default is 'collapsed'. Only expand if user explicitly opened it and saved 'open'.
+  const saved = localStorage.getItem('mathscript-sidebar');
+  const shouldBeOpen = saved === 'open';
+  if (shouldBeOpen) {
+    app.classList.remove('sidebar-collapsed');
+    if (toggleBtn) toggleBtn.title = 'Slide panel closed (hide sidebar)';
+  } else {
+    app.classList.add('sidebar-collapsed');
+    if (toggleBtn) toggleBtn.title = 'Slide panel open (show sidebar)';
+  }
+  if (toggleBtn) toggleBtn.setAttribute('aria-expanded', String(shouldBeOpen));
+  if (closeBtn) closeBtn.setAttribute('aria-expanded', String(shouldBeOpen));
+
+  function toggleSidebar(force) {
+    const isCollapsed = typeof force === 'boolean' ? force : !app.classList.contains('sidebar-collapsed');
+    app.classList.toggle('sidebar-collapsed', isCollapsed);
+    localStorage.setItem('mathscript-sidebar', isCollapsed ? 'collapsed' : 'open');
+    if (toggleBtn) {
+      toggleBtn.title = isCollapsed ? 'Slide panel open (show sidebar)' : 'Slide panel closed (hide sidebar)';
+      toggleBtn.setAttribute('aria-expanded', String(!isCollapsed));
+    }
+    if (closeBtn) closeBtn.setAttribute('aria-expanded', String(!isCollapsed));
+    schedule();
+    setTimeout(schedule, 150);
+    setTimeout(schedule, 320);
+  }
+
+  if (toggleBtn) toggleBtn.onclick = () => toggleSidebar();
+  if (closeBtn) closeBtn.onclick = () => toggleSidebar(true);
+  if (edgeBtn) edgeBtn.onclick = () => toggleSidebar(false);
+
+  window.addEventListener('keydown', e => {
+    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+    if (e.key === '[' || e.key === '\\') {
+      e.preventDefault();
+      toggleSidebar();
+    }
+  });
+})();
+
+// ── Live Auto-Refresh ─────────────────────────────────────────────────────
+(function initLiveReload() {
+  const loc = window.location || { pathname: '', search: '', protocol: '' };
+  const pathname = loc.pathname || '';
+  const isLive = pathname.endsWith('MathScriptLiveGraph.html') ||
+    pathname.endsWith('MathScriptLiveGraph') ||
+    pathname === '/' ||
+    (loc.search && loc.search.includes('live=true'));
+
+  const liveIndicator = $('live-indicator');
+  if (!isLive) {
+    if (liveIndicator) liveIndicator.style.display = 'none';
+    return;
+  }
+  if (liveIndicator) liveIndicator.style.display = 'inline-flex';
+
+  const currentVersion = typeof liveVersion !== 'undefined' ? liveVersion : '';
+  let reloaded = false;
+
+  function triggerReload() {
+    if (reloaded) return;
+    reloaded = true;
+    const toast = document.createElement('div');
+    toast.className = 'live-reload-toast';
+    toast.innerHTML = '<span class="live-pulse"></span><span>New graph detected · Refreshing…</span>';
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      window.location.reload();
+    }, 120);
+  }
+
+  // 1. Hidden iframe watcher for live_ping.html (works on file:// and http:// across all browsers)
+  let iframe = null;
+  try {
+    iframe = document.createElement('iframe');
+    iframe.id = 'mathscript-live-watcher';
+    iframe.style.display = 'none';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.src = 'live_ping.html';
+    document.body.appendChild(iframe);
+
+    window.addEventListener('message', e => {
+      if (e && e.data && e.data.mathscript_live) {
+        if (currentVersion && e.data.mathscript_live !== currentVersion) {
+          triggerReload();
+        }
+      }
+    });
+
+    // Re-ping iframe if tab was in background or throttled
+    setInterval(() => {
+      if (!reloaded && iframe) {
+        try {
+          iframe.contentWindow.location.reload();
+        } catch (_) {
+          iframe.src = 'live_ping.html';
+        }
+      }
+    }, 2500);
+
+    // Immediate check on window focus
+    window.addEventListener('focus', () => {
+      if (!reloaded && iframe) {
+        try {
+          iframe.contentWindow.location.reload();
+        } catch (_) {
+          iframe.src = 'live_ping.html';
+        }
+      }
+    });
+  } catch (_) { }
+
+  // 2. Fetch-based polling for HTTP servers
+  if (loc.protocol && loc.protocol.startsWith('http')) {
+    setInterval(() => {
+      if (reloaded) return;
+      fetch('live_version.json?t=' + Date.now(), { cache: 'no-store' })
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.version && currentVersion && data.version !== currentVersion) {
+            triggerReload();
+          }
+        })
+        .catch(() => { });
+    }, 800);
+  }
 })();
